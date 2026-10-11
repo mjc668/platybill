@@ -11,6 +11,7 @@ import app.models.category  # noqa: F401
 import app.models.payment  # noqa: F401
 import app.models.reset_token  # noqa: F401
 import app.models.restore_snapshot  # noqa: F401
+import app.models.import_draft  # noqa: F401
 
 config = context.config
 # An explicitly configured URL (e.g. the ETL script targeting a fresh SQLite

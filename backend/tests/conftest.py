@@ -7,6 +7,7 @@ import app.models.category  # noqa: F401
 import app.models.payment  # noqa: F401
 import app.models.reset_token  # noqa: F401
 import app.models.restore_snapshot  # noqa: F401
+import app.models.import_draft  # noqa: F401
 import app.models.user  # noqa: F401
 
 import pytest
@@ -33,6 +34,7 @@ for _scope in (
     "change_email",
     "send_now",
     "restore",
+    "import",
 ):
     setattr(_settings, f"{_scope}_rate_limit", 100000)
 

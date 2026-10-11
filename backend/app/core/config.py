@@ -64,6 +64,34 @@ class Settings(BaseSettings):
     # array, e.g. '["test.com","example.com"]'. Defaults cover E2E test addresses.
     email_blocked_domains: list[str] = ["test.com", "example.com"]
 
+    # --- Bill import (optional) -------------------------------------------
+    # Local Ollama extraction; uploads always work when Ollama is configured,
+    # the directory/email pollers additionally require IMPORT_ENABLED.
+    import_enabled: bool = False
+    import_user_email: str | None = None  # target account for polled imports
+    ollama_base_url: str | None = None
+    ollama_model: str = "numind/nuextract3"
+    ollama_ocr_model: str = "maternion/LightOnOCR-2:1b"
+    ollama_text_model: str = "gemma4"
+    ollama_timeout_seconds: float = 120.0
+    import_dir: str = "/data/import"
+    import_poll_minutes: int = 15
+    import_max_file_mb: int = 15
+    import_keep_files: bool = False
+    import_rate_limit: int = 10
+    import_rate_window_seconds: int = 3600
+
+    # IMAP mailbox (optional; part of bill import)
+    imap_host: str | None = None
+    imap_port: int = 993
+    imap_user: str | None = None
+    imap_password: SecretStr | None = None
+    imap_folder: str = "INBOX"
+    imap_tls: bool = True
+    imap_poll_minutes: int = 15
+    imap_mark_read: bool = True
+    imap_allowed_senders: list[str] = []
+
     # Password reset
     app_base_url: str = "http://localhost:3010"
     password_reset_token_expire_minutes: int = 60
@@ -80,6 +108,21 @@ class Settings(BaseSettings):
         # The gateway base URL alone is enough: the container may hold the
         # targets itself (its own APPRISE_STATELESS_URLS or saved config key).
         return bool(self.apprise_base_url)
+
+    @property
+    def ollama_configured(self) -> bool:
+        return bool(self.ollama_base_url)
+
+    @property
+    def imap_configured(self) -> bool:
+        return bool(self.imap_host and self.imap_user and self.imap_password)
+
+    @field_validator("ollama_base_url")
+    @classmethod
+    def strip_ollama_base_url_trailing_slash(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.rstrip("/")
 
     @field_validator("apprise_base_url")
     @classmethod

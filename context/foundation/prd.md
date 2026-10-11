@@ -127,6 +127,12 @@ household finance manager does not need to check the dashboard proactively.
   > Socratic: Defaulting to template amount reduces friction for the common case where
   > actual equals expected; override is available for variable bills (e.g., utilities).
 
+- FR-019: A bill can be imported from an upload, a watched folder, or a mailbox. A local
+  model extracts provider/amount/due date, and the user confirms the draft before anything
+  is written; matched variable bills prefill the confirmation queue. Priority: must-have
+  > Socratic: Manual entry is the main friction for usage-based bills. Local extraction
+  > keeps documents on the LAN, and confirm-first protects the ledger from model mistakes.
+
 - FR-018: A bill can be flagged "amount varies each period" (utilities). Instances for
   such bills are generated with a suggested amount — the median of the last three
   confirmed amounts — and stay out of the payments list, reminders and stats until the

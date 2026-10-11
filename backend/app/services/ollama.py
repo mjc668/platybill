@@ -1,0 +1,96 @@
+"""Minimal client for the local Ollama HTTP API (shared by AI features)."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+
+from app.core.config import settings
+
+
+class OllamaError(RuntimeError):
+    """Base error for Ollama calls."""
+
+
+class OllamaUnavailable(OllamaError):
+    """The server could not be reached."""
+
+
+class OllamaBadResponse(OllamaError):
+    """The server answered, but not with usable JSON."""
+
+
+def generate_json(
+    *,
+    model: str,
+    prompt: str,
+    images: list[str] | None = None,
+    schema: dict[str, Any] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """Run a single non-streaming generation and parse the JSON response.
+
+    `images` are base64 strings; `schema` becomes Ollama's structured-output
+    `format` so the model is constrained to valid JSON.
+    """
+    base_url = settings.ollama_base_url
+    if not base_url:
+        raise OllamaUnavailable("Ollama is not configured (set OLLAMA_BASE_URL)")
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0},
+    }
+    if images:
+        payload["images"] = images
+    if schema:
+        payload["format"] = schema
+
+    try:
+        response = httpx.post(
+            f"{base_url}/api/generate",
+            json=payload,
+            timeout=timeout if timeout is not None else settings.ollama_timeout_seconds,
+        )
+    except httpx.HTTPError as exc:
+        raise OllamaUnavailable(f"Ollama request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        raise OllamaBadResponse(
+            f"Ollama HTTP {response.status_code}: {response.text[:200]}"
+        )
+
+    try:
+        body = response.json()
+        raw = body["response"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise OllamaBadResponse("Ollama returned no response field") from exc
+
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise OllamaBadResponse(f"Model did not return JSON: {str(raw)[:200]}") from exc
+    if not isinstance(parsed, dict):
+        raise OllamaBadResponse("Model returned JSON that is not an object")
+    return parsed
+
+
+def list_models(timeout: float = 5.0) -> list[str]:
+    """Names of locally available models; raises OllamaUnavailable on failure."""
+    base_url = settings.ollama_base_url
+    if not base_url:
+        raise OllamaUnavailable("Ollama is not configured (set OLLAMA_BASE_URL)")
+    try:
+        response = httpx.get(f"{base_url}/api/tags", timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise OllamaUnavailable(f"Ollama request failed: {exc}") from exc
+    if response.status_code != 200:
+        raise OllamaBadResponse(f"Ollama HTTP {response.status_code}")
+    try:
+        return [str(m["name"]) for m in response.json().get("models", [])]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise OllamaBadResponse("Unexpected /api/tags payload") from exc
