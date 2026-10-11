@@ -461,21 +461,23 @@ export default function BillTemplateForm({
         </div>
       </div>
 
-      {/* Amount-varies toggle */}
-      <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-600 dark:text-slate-400">
-        <input
-          type="checkbox"
-          checked={amountVaries}
-          onChange={(e) => setAmountVaries(e.target.checked)}
-          className="mt-0.5 h-4 w-4 rounded accent-blue-700"
-        />
-        <span>
+      {/* Amount-varies toggle. The hint sits outside the label so the
+          checkbox's accessible name stays short ("Usage-based bill") and
+          doesn't collide with the Amount field's label. */}
+      <div>
+        <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">
+          <input
+            type="checkbox"
+            checked={amountVaries}
+            onChange={(e) => setAmountVaries(e.target.checked)}
+            className="h-4 w-4 rounded accent-blue-700"
+          />
           {t("amountVariesLabel")}
-          <span className="mt-0.5 block text-xs text-slate-400 dark:text-slate-500">
-            {t("amountVariesHint")}
-          </span>
-        </span>
-      </label>
+        </label>
+        <p className="ml-6.5 mt-1 text-xs text-slate-400 dark:text-slate-500">
+          {t("amountVariesHint")}
+        </p>
+      </div>
 
       {/* Paused toggle */}
       <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">

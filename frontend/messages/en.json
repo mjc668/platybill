@@ -142,7 +142,7 @@
         "expandAll": "Expand all"
     },
     "BillTemplateForm": {
-        "amountVariesLabel": "Amount varies each period",
+        "amountVariesLabel": "Usage-based bill",
         "amountVariesHint": "Usage-based bills (water, power): each period gets a suggested amount from history that you confirm before it counts.",
         "nameLabel": "Name",
         "namePlaceholder": "e.g. Electricity",

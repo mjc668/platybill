@@ -103,7 +103,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Create .env from example
-        run: cp .env.example .env
+        # The suite registers a user per test from one IP; raise the auth
+        # rate limits for this disposable stack so retries can't trip 429s.
+        run: |
+          cp .env.example .env
+          printf 'REGISTER_RATE_LIMIT=10000\nLOGIN_RATE_LIMIT=10000\nFORGOT_PASSWORD_RATE_LIMIT=10000\nRESET_PASSWORD_RATE_LIMIT=10000\n' >> .env
 
       - name: Build Docker Compose services
         run: docker compose --profile demo build
