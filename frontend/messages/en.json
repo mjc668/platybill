@@ -87,6 +87,26 @@
         "miniCalendarTitle": "Calendar",
         "miniCalendarLinkLabel": "View payments for {month}"
     },
+    "BillImport": {
+        "loading": "Checking import status…",
+        "ollamaLabel": "Local model (Ollama)",
+        "notConfigured": "not configured",
+        "ready": "{model} · ready",
+        "modelMissing": "{model} · not pulled yet",
+        "unreachable": "configured but unreachable",
+        "watchDirLabel": "Watch folder",
+        "disabled": "polling off",
+        "imapLabel": "Email inbox",
+        "configured": "configured",
+        "pendingLabel": "Pending imports",
+        "testButton": "Test model",
+        "scanButton": "Scan now",
+        "scanDone": "Scan finished — new drafts, if any, are on the Payments page.",
+        "scanFailed": "Scan failed. Please try again.",
+        "testOkModelReady": "Connected. {model} is ready.",
+        "testOkModelMissing": "Connected, but {model} is not pulled yet.",
+        "testFailed": "Could not reach the model server."
+    },
     "BillsPage": {
         "viewDue": "Next due",
         "viewCategory": "By category",
@@ -236,7 +256,25 @@
         "addCancel": "Cancel",
         "addFailed": "Could not create the category."
     },
+    "ImportedBills": {
+        "title": "{count, plural, one {# imported bill to review} other {# imported bills to review}}",
+        "unknownSource": "Imported document",
+        "noAmount": "no amount found",
+        "source": {
+            "upload": "upload",
+            "directory": "watched folder",
+            "email": "email"
+        },
+        "billPickerLabel": "Match to bill",
+        "pickBill": "Choose a bill…",
+        "confirm": "Confirm",
+        "discard": "Discard",
+        "confirmFailed": "Could not apply the import.",
+        "discardFailed": "Could not discard the import.",
+        "updateFailed": "Could not update the import."
+    },
     "PaymentsPage": {
+        "importBill": "Import bill",
         "needsConfirmationTitle": "{count, plural, one {# bill needs an amount} other {# bills need amounts}}",
         "needsConfirmationHint": "{period} · suggested {amount}",
         "needsConfirmationButton": "Confirm",
@@ -377,6 +415,10 @@
         "disable": "Disable email reminders"
     },
     "SettingsPage": {
+        "billImport": {
+            "title": "Bill import",
+            "description": "Upload or ingest bills from a folder or mailbox and extract the amount with your local model. Every import is reviewed before it is applied."
+        },
         "pageTitle": "Settings",
         "collapseAll": "Collapse all",
         "expandAll": "Expand all",

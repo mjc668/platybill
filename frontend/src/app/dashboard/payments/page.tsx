@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   CalendarDays,
@@ -11,6 +11,7 @@ import {
   List,
   Loader2,
   ReceiptText,
+  Upload,
   X,
 } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
@@ -41,6 +42,8 @@ import PaymentFilters, {
 import MarkPaidDialog from "@/components/payments/MarkPaidDialog";
 import DeletePaymentDialog from "@/components/payments/DeletePaymentDialog";
 import ConfirmAmountDialog from "@/components/payments/ConfirmAmountDialog";
+import ImportedBillsCard from "@/components/payments/ImportedBillsCard";
+import { uploadBill } from "@/lib/imports-api";
 import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
 import {
   PaymentActionProvider,
@@ -147,6 +150,11 @@ function PaymentsPageInner() {
   const [confirmTarget, setConfirmTarget] = useState<PendingConfirmationOut | null>(
     null,
   );
+  const [reloadToken, setReloadToken] = useState(0);
+  const [importRefresh, setImportRefresh] = useState(0);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Derived: true whenever selectedMonth hasn't finished loading yet.
   // Becomes true immediately when selectedMonth changes (same render), so no
@@ -177,7 +185,7 @@ function PaymentsPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth, currentMonth, t]);
+  }, [selectedMonth, currentMonth, t, reloadToken]);
 
   function refreshPendingConfirmations() {
     fetchNeedsConfirmation()
@@ -198,6 +206,27 @@ function PaymentsPageInner() {
     setDialogTarget(null);
     // A full payment settles the estimate server-side; refresh the queue.
     refreshPendingConfirmations();
+  }
+
+  function handleImportApplied() {
+    refreshPendingConfirmations();
+    setReloadToken((token) => token + 1);
+  }
+
+  async function handleImportUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      await uploadBill(file);
+      setImportRefresh((token) => token + 1);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : t("importFailed"));
+    } finally {
+      setImportBusy(false);
+    }
   }
 
   function handleAmountConfirmed(updated: PaymentInstanceOut) {
@@ -348,6 +377,14 @@ function PaymentsPageInner() {
         />
       )}
 
+      <ImportedBillsCard key={importRefresh} onApplied={handleImportApplied} />
+
+      {importError && (
+        <p className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {importError}
+        </p>
+      )}
+
       {/* Page header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -358,6 +395,27 @@ function PaymentsPageInner() {
             {t("subtitle")}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importBusy}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+          >
+            {importBusy ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <Upload size={15} />
+            )}
+            {t("importBill")}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf,image/png,image/jpeg"
+            className="hidden"
+            onChange={handleImportUpload}
+          />
         <div className="flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
           <button
             type="button"
@@ -385,6 +443,7 @@ function PaymentsPageInner() {
             <CalendarDays size={14} />
             {t("viewCalendar")}
           </button>
+        </div>
         </div>
       </div>
 

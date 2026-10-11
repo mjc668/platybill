@@ -18,6 +18,7 @@ import { ProfileTile } from "@/components/settings/ProfileTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
 import { CategoriesTile } from "@/components/settings/CategoriesTile";
+import { BillImportTile } from "@/components/settings/BillImportTile";
 import { UnsavedChangesDialog } from "@/components/settings/UnsavedChangesDialog";
 
 export default function SettingsPage() {
@@ -135,6 +136,12 @@ export default function SettingsPage() {
         t={t}
         isCollapsed={collapsed.has("categories")}
         onToggle={() => toggle("categories")}
+      />
+
+      <BillImportTile
+        t={t}
+        isCollapsed={collapsed.has("bill-import")}
+        onToggle={() => toggle("bill-import")}
       />
 
       <Tile
