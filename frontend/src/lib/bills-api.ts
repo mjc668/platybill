@@ -26,6 +26,7 @@ export interface BillTemplateOut {
   max_occurrences: number | null;
   start_date: string | null;
   amount: string;
+  amount_varies: boolean;
   currency: string;
   due_day: number | null;
   due_month: number | null;
@@ -44,6 +45,7 @@ export interface BillTemplateCreate {
   max_occurrences?: number | null;
   start_date?: string | null;
   amount: string;
+  amount_varies?: boolean;
   currency?: string;
   due_day?: number | null;
   due_month?: number | null;

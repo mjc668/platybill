@@ -142,6 +142,8 @@
         "expandAll": "Expand all"
     },
     "BillTemplateForm": {
+        "amountVariesLabel": "Amount varies each period",
+        "amountVariesHint": "Usage-based bills (water, power): each period gets a suggested amount from history that you confirm before it counts.",
         "nameLabel": "Name",
         "namePlaceholder": "e.g. Electricity",
         "nameRequired": "Name is required.",
@@ -231,6 +233,9 @@
         "addFailed": "Could not create the category."
     },
     "PaymentsPage": {
+        "needsConfirmationTitle": "{count, plural, one {# bill needs an amount} other {# bills need amounts}}",
+        "needsConfirmationHint": "{period} · suggested {amount}",
+        "needsConfirmationButton": "Confirm",
         "title": "Payments",
         "subtitle": "Track and mark your bills month by month.",
         "loadError": "Failed to load payments.",
@@ -302,6 +307,16 @@
         "confirm": "Delete",
         "deleting": "Deleting…",
         "deleteFailed": "Failed to delete payment."
+    },
+    "ConfirmAmountDialog": {
+        "title": "Confirm {billName}",
+        "subtitle": "Enter the actual amount for {period}.",
+        "basisLabel": "Based on recent amounts:",
+        "amountLabel": "Amount",
+        "confirm": "Confirm amount",
+        "cancel": "Cancel",
+        "amountInvalid": "Enter a valid amount greater than zero",
+        "saveFailed": "Could not save the amount. Please try again."
     },
     "MarkPaidDialog": {
         "title": "Mark as Paid: {billName}",

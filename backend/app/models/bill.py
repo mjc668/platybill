@@ -58,6 +58,11 @@ class BillTemplate(Base):
     max_occurrences: Mapped[int | None] = mapped_column(Integer)
     start_date: Mapped[date | None] = mapped_column(Date)  # weekly anchor
     amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    # Usage-based bills (utilities): generated instances get a suggested
+    # amount from history and must be confirmed before they count.
+    amount_varies: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="PLN")
     due_day: Mapped[int | None] = mapped_column(
         Integer
@@ -98,6 +103,10 @@ class PaymentInstance(Base):
     period: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    # True while the amount is an unconfirmed estimate (variable bills).
+    amount_estimated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     status: Mapped[PaymentStatus] = mapped_column(
         String(10), nullable=False, default=PaymentStatus.upcoming
     )

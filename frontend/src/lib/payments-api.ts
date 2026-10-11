@@ -20,6 +20,7 @@ export interface PaymentInstanceOut {
   period: string;
   due_date: string;
   amount: string;
+  amount_estimated: boolean;
   status: PaymentStatus;
   paid_at: string | null;
   paid_amount: string | null;
@@ -33,6 +34,24 @@ export interface PaymentInstanceOut {
   category: Category;
   email_sent_at: string | null;
   payments: PaymentEvent[];
+}
+
+export interface PendingConfirmationOut extends PaymentInstanceOut {
+  basis_amounts: string[];
+}
+
+export function fetchNeedsConfirmation(): Promise<PendingConfirmationOut[]> {
+  return apiFetch<PendingConfirmationOut[]>("/bills/payments/needs-confirmation");
+}
+
+export function confirmInstanceAmount(
+  instanceId: number,
+  amount: string,
+): Promise<PaymentInstanceOut> {
+  return apiFetch<PaymentInstanceOut>(`/bills/payments/${instanceId}/amount`, {
+    method: "PATCH",
+    body: JSON.stringify({ amount }),
+  });
 }
 
 export function syncInstances(month: string): Promise<void> {

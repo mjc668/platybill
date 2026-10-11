@@ -10,13 +10,16 @@ import {
   Download,
   List,
   Loader2,
+  ReceiptText,
   X,
 } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import {
+  fetchNeedsConfirmation,
   fetchPayments,
   syncInstances,
   type PaymentInstanceOut,
+  type PendingConfirmationOut,
 } from "@/lib/payments-api";
 import { type Category } from "@/lib/categories-api";
 import { categoryValue, sortCategories } from "@/lib/categories";
@@ -37,6 +40,7 @@ import PaymentFilters, {
 } from "@/components/payments/PaymentFilters";
 import MarkPaidDialog from "@/components/payments/MarkPaidDialog";
 import DeletePaymentDialog from "@/components/payments/DeletePaymentDialog";
+import ConfirmAmountDialog from "@/components/payments/ConfirmAmountDialog";
 import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
 import {
   PaymentActionProvider,
@@ -137,6 +141,12 @@ function PaymentsPageInner() {
   const [statusFilter, setStatusFilter] = useState<PaymentStatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchFilter, setSearchFilter] = useState("");
+  const [pendingConfirmations, setPendingConfirmations] = useState<
+    PendingConfirmationOut[]
+  >([]);
+  const [confirmTarget, setConfirmTarget] = useState<PendingConfirmationOut | null>(
+    null,
+  );
 
   // Derived: true whenever selectedMonth hasn't finished loading yet.
   // Becomes true immediately when selectedMonth changes (same render), so no
@@ -169,11 +179,33 @@ function PaymentsPageInner() {
     };
   }, [selectedMonth, currentMonth, t]);
 
+  function refreshPendingConfirmations() {
+    fetchNeedsConfirmation()
+      .then(setPendingConfirmations)
+      .catch((err: unknown) => {
+        if (!(err instanceof SessionExpiredError)) setPendingConfirmations([]);
+      });
+  }
+
+  useEffect(() => {
+    refreshPendingConfirmations();
+  }, []);
+
   function handleInstancePaid(updated: PaymentInstanceOut) {
     setInstances((prev) =>
       prev.map((inst) => (inst.id === updated.id ? updated : inst)),
     );
     setDialogTarget(null);
+    // A full payment settles the estimate server-side; refresh the queue.
+    refreshPendingConfirmations();
+  }
+
+  function handleAmountConfirmed(updated: PaymentInstanceOut) {
+    setPendingConfirmations((prev) => prev.filter((item) => item.id !== updated.id));
+    setConfirmTarget(null);
+    if (updated.period === selectedMonth) {
+      setInstances((prev) => [...prev, updated]);
+    }
   }
 
   function handleInstanceDeleted(id: number) {
@@ -307,6 +339,14 @@ function PaymentsPageInner() {
           onDeleted={handleInstanceDeleted}
         />
       )}
+      {confirmTarget && (
+        <ConfirmAmountDialog
+          instance={confirmTarget}
+          isOpen={true}
+          onClose={() => setConfirmTarget(null)}
+          onConfirm={handleAmountConfirmed}
+        />
+      )}
 
       {/* Page header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -430,6 +470,48 @@ function PaymentsPageInner() {
           )}
         </div>
       </div>
+
+      {/* Needs confirmation — variable-bill estimates awaiting the real amount */}
+      {pendingConfirmations.length > 0 && (
+        <div
+          data-testid="needs-confirmation"
+          className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/60 dark:bg-amber-900/10"
+        >
+          <div className="mb-3 flex items-center gap-2">
+            <ReceiptText size={16} className="text-amber-600 dark:text-amber-400" />
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              {t("needsConfirmationTitle", { count: pendingConfirmations.length })}
+            </h2>
+          </div>
+          <ul className="flex flex-col gap-2">
+            {pendingConfirmations.map((item) => (
+              <li
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200/70 bg-white px-3 py-2 dark:border-amber-900/40 dark:bg-slate-800"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                    {item.bill_name}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t("needsConfirmationHint", {
+                      period: item.period,
+                      amount: `${amountFormatter.format(parseFloat(item.amount))} ${item.currency}`,
+                    })}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConfirmTarget(item)}
+                  className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 dark:border-amber-800 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
+                >
+                  {t("needsConfirmationButton")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Selected month header */}
       <div className="mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">

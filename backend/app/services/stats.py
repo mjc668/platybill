@@ -126,6 +126,7 @@ def _summary(
             BillTemplate.currency == currency,
             PaymentInstance.period == month,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
         )
         .one()
     )
@@ -173,6 +174,7 @@ def _trend(
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.period.in_(periods),
         )
         .group_by(PaymentInstance.period)
@@ -258,6 +260,7 @@ def _by_category(
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.period.in_(periods),
         )
         .group_by(BillTemplate.category_id)
@@ -309,6 +312,7 @@ def _attention(
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.status != PaymentStatus.paid,
             PaymentInstance.amount > func.coalesce(PaymentInstance.paid_amount, 0),
             PaymentInstance.due_date <= today + timedelta(days=ATTENTION_WINDOW_DAYS),
@@ -361,6 +365,7 @@ def _upcoming_window(
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.status != PaymentStatus.paid,
             remaining > 0,
             PaymentInstance.due_date >= today,
@@ -396,6 +401,7 @@ def _paid_window(db: Session, user_id: int, currency: str, today: date) -> PaidW
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.due_date >= start,
             PaymentInstance.due_date <= today,
         )
@@ -424,6 +430,7 @@ def _overdue_summary(
             BillTemplate.user_id == user_id,
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
             PaymentInstance.status != PaymentStatus.paid,
             PaymentInstance.due_date < today,
         )

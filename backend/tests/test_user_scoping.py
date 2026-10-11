@@ -155,7 +155,7 @@ def test_export_json_scoped(client):
     r = client.get("/export/json", headers=auth(tok_b))
     assert r.status_code == 200
     data = r.json()
-    assert data["schema_version"] == 7
+    assert data["schema_version"] == 8
     assert data["exported_by"] == "b@test.com"
     assert "users" not in data
     assert data["bill_templates"] == []

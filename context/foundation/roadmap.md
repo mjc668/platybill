@@ -428,7 +428,7 @@ Shipped after the planned slices completed. Each maps to an archived change fold
 
 ## Current change (in flight)
 
-None.
+- **variable-bills**: opt-in "amount varies each period" for usage-based bills; instances start as estimates (median of the last 3 confirmed amounts) and are confirmed before they appear in lists, reminders or stats. Plan: `context/changes/variable-bills/plan.md`.
 
 ## Next up
 

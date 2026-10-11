@@ -134,6 +134,7 @@ export default function BillTemplateForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [isPaused, setIsPaused] = useState(initial?.is_paused ?? false);
+  const [amountVaries, setAmountVaries] = useState(initial?.amount_varies ?? false);
   const [errors, setErrors] = useState<Errors>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -247,6 +248,7 @@ export default function BillTemplateForm({
             : parseMaxOccurrences(maxOccurrences),
         start_date: isWeekly ? startDate : null,
         amount: amount.trim() || "0",
+        amount_varies: amountVaries,
         currency: resolvedCurrency || "EUR",
         due_day: isWeekly || !dueDay ? null : parseInt(dueDay, 10),
         due_month: isWeekly || !dueMonth ? null : parseInt(dueMonth, 10),
@@ -458,6 +460,22 @@ export default function BillTemplateForm({
           />
         </div>
       </div>
+
+      {/* Amount-varies toggle */}
+      <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-600 dark:text-slate-400">
+        <input
+          type="checkbox"
+          checked={amountVaries}
+          onChange={(e) => setAmountVaries(e.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded accent-blue-700"
+        />
+        <span>
+          {t("amountVariesLabel")}
+          <span className="mt-0.5 block text-xs text-slate-400 dark:text-slate-500">
+            {t("amountVariesHint")}
+          </span>
+        </span>
+      </label>
 
       {/* Paused toggle */}
       <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">

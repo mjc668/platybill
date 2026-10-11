@@ -17,9 +17,11 @@ from app.schemas.bill import (
     GenerateInstancesOut,
     GenerateInstancesRequest,
     HasDeletedFutureOut,
+    InstanceAmountUpdate,
     MarkPaidRequest,
     PaymentCreate,
     PaymentInstanceOut,
+    PendingConfirmationOut,
 )
 from app.services.categories import (
     CategoryError,
@@ -30,11 +32,14 @@ from app.services.payments import (
     clear_payments,
     delete_payment as delete_payment_record,
     get_total,
+    recalculate_instance,
     record_payment,
 )
 from app.services.recurrence import (
     _due_date_for_period,
     backfill_template_instances,
+    confirmed_amounts,
+    suggested_amount,
     ensure_current_period_instances,
     generate_future_instances,
     generate_next_instance,
@@ -98,6 +103,7 @@ def _to_out(
             "period": inst.period,
             "due_date": inst.due_date,
             "amount": inst.amount,
+            "amount_estimated": inst.amount_estimated,
             "status": override_status if override_status is not None else inst.status,
             "paid_at": inst.paid_at,
             "paid_amount": inst.paid_amount,
@@ -182,6 +188,7 @@ def create_bill(
         due_day=due_day,
         notes=body.notes,
         is_paused=body.is_paused,
+        amount_varies=body.amount_varies,
         user_id=me.id,
         start_period=start_period,
     )
@@ -239,6 +246,9 @@ def list_payments(
         .filter(
             BillTemplate.user_id == me.id,
             PaymentInstance.is_deleted.is_(False),
+            # Estimated variable-bill instances stay out of the normal list
+            # until their amount is confirmed (see /payments/needs-confirmation).
+            PaymentInstance.amount_estimated.is_(False),
             scope,
         )
         .order_by(PaymentInstance.due_date)
@@ -393,6 +403,65 @@ def delete_payment(
         ).update({"is_deleted": True}, synchronize_session=False)
 
     db.commit()
+
+
+@router.get("/payments/needs-confirmation", response_model=list[PendingConfirmationOut])
+def needs_confirmation(
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+):
+    """Variable-bill instances whose amount is still an unconfirmed estimate.
+
+    Only instances whose period has arrived are surfaced; future pre-generated
+    periods are not nagged about.
+    """
+    current_month = date.today().strftime("%Y-%m")
+    instances = (
+        db.query(PaymentInstance)
+        .options(
+            selectinload(PaymentInstance.template).selectinload(BillTemplate.category),
+            selectinload(PaymentInstance.payments),
+        )
+        .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .filter(
+            BillTemplate.user_id == me.id,
+            PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(True),
+            PaymentInstance.status != PaymentStatus.paid,
+            PaymentInstance.period <= current_month,
+        )
+        .order_by(PaymentInstance.due_date)
+        .all()
+    )
+    return [
+        PendingConfirmationOut(
+            **(_to_out(inst).model_dump()),
+            basis_amounts=confirmed_amounts(db, inst.template),
+        )
+        for inst in instances
+    ]
+
+
+@router.patch("/payments/{instance_id}/amount", response_model=PaymentInstanceOut)
+def update_instance_amount(
+    instance_id: int,
+    body: InstanceAmountUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+):
+    """Set the real amount for an instance and mark it confirmed."""
+    instance = _get_scoped_instance(db, instance_id, me)
+    if instance.status == PaymentStatus.paid:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot change the amount of a paid instance",
+        )
+    instance.amount = body.amount
+    instance.amount_estimated = False
+    recalculate_instance(instance)
+    db.commit()
+    db.refresh(instance)
+    return _to_out(instance)
 
 
 @router.post("/sync-instances", status_code=status.HTTP_204_NO_CONTENT)
@@ -627,7 +696,11 @@ def update_bill(
         )
         for inst in tombstones:
             inst.is_deleted = False
-            inst.amount = bill.amount
+            if bill.amount_varies:
+                inst.amount = suggested_amount(db, bill)
+                inst.amount_estimated = True
+            else:
+                inst.amount = bill.amount
             if bill.frequency != BF.weekly:
                 # Weekly tombstones keep their occurrence date; period already
                 # matches it and a month can hold several occurrences.

@@ -158,6 +158,7 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
                 "max_occurrences": t.max_occurrences,
                 "start_date": t.start_date.isoformat() if t.start_date else None,
                 "amount": float(t.amount),
+                "amount_varies": t.amount_varies,
                 "currency": t.currency,
                 "due_day": t.due_day,
                 "notes": t.notes,
@@ -175,6 +176,7 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
                 "period": i.period,
                 "due_date": i.due_date.isoformat(),
                 "amount": float(i.amount),
+                "amount_estimated": i.amount_estimated,
                 "status": i.status,
                 "paid_at": i.paid_at.isoformat() if i.paid_at else None,
                 "paid_amount": float(i.paid_amount) if i.paid_amount else None,
@@ -205,7 +207,7 @@ def export_json(
     me: User = Depends(current_user),
 ):
     payload = {
-        "schema_version": 7,
+        "schema_version": 8,
         "exported_by": me.email,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         **_build_backup_arrays(db, me.id),
@@ -311,6 +313,7 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
             max_occurrences=bt.max_occurrences,
             start_date=date.fromisoformat(bt.start_date) if bt.start_date else None,
             amount=Decimal(str(bt.amount)),
+            amount_varies=bt.amount_varies,
             currency=bt.currency,
             due_day=bt.due_day,
             notes=bt.notes,
@@ -330,6 +333,7 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
             period=bi.period,
             due_date=date.fromisoformat(bi.due_date),
             amount=Decimal(str(bi.amount)),
+            amount_estimated=bi.amount_estimated,
             status=PaymentStatus(bi.status),
             paid_at=datetime.fromisoformat(bi.paid_at) if bi.paid_at else None,
             paid_amount=(
@@ -382,7 +386,7 @@ def restore_json(
     if not isinstance(raw, dict):
         raise HTTPException(status_code=422, detail="Invalid backup file")
 
-    if raw.get("schema_version") not in {2, 3, 4, 5, 6, 7}:
+    if raw.get("schema_version") not in {2, 3, 4, 5, 6, 7, 8}:
         raise HTTPException(status_code=422, detail="Unsupported schema version")
 
     try:
@@ -414,7 +418,7 @@ def restore_json(
     )
     if has_existing_bills:
         snapshot_payload = {
-            "schema_version": 7,
+            "schema_version": 8,
             **_build_backup_arrays(db, me.id),
         }
         db.query(RestoreSnapshot).filter(RestoreSnapshot.user_id == me.id).delete(

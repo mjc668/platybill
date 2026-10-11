@@ -98,6 +98,7 @@ def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
             BillTemplate.user_id == user.id,
             PaymentInstance.period == month,
             PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
         )
         .all()
     )
@@ -234,6 +235,7 @@ def send_reminders_for_user(db: Session, user: User) -> int:
                 PaymentInstance.due_date == due,
                 PaymentInstance.status != PaymentStatus.paid,
                 PaymentInstance.is_deleted.is_(False),
+                PaymentInstance.amount_estimated.is_(False),
                 getattr(PaymentInstance, flag_attr).is_(False),
             )
             .all()

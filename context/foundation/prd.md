@@ -127,6 +127,15 @@ household finance manager does not need to check the dashboard proactively.
   > Socratic: Defaulting to template amount reduces friction for the common case where
   > actual equals expected; override is available for variable bills (e.g., utilities).
 
+- FR-018: A bill can be flagged "amount varies each period" (utilities). Instances for
+  such bills are generated with a suggested amount — the median of the last three
+  confirmed amounts — and stay out of the payments list, reminders and stats until the
+  user confirms the real amount. Paying an instance in full also settles its estimate.
+  Priority: must-have
+  > Socratic: Usage-based bills have no fixed amount; silently reusing the template
+  > amount makes the list lie. A confirm step keeps the schedule honest without manual
+  > per-period entry, and the median (not the mean) resists one outlier month.
+
 - FR-009: System auto-creates the next-period payment instance when the current one is
   marked as paid; auto-creation is suppressed when the template's paused flag is set.
   Priority: must-have

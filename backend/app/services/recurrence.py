@@ -1,5 +1,6 @@
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,6 +15,46 @@ _INTERVAL_MAX: dict[BillFrequency, int] = {
     BillFrequency.annual: 5,
     BillFrequency.one_off: 1,
 }
+
+
+def confirmed_amounts(
+    db: Session, template: BillTemplate, limit: int = 3
+) -> list[Decimal]:
+    """The most recent confirmed amounts for a template, newest first."""
+    rows = (
+        db.query(PaymentInstance.amount)
+        .filter(
+            PaymentInstance.bill_id == template.id,
+            PaymentInstance.amount_estimated.is_(False),
+            PaymentInstance.is_deleted.is_(False),
+        )
+        .order_by(PaymentInstance.due_date.desc(), PaymentInstance.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+def suggested_amount(db: Session, template: BillTemplate) -> Decimal:
+    """Median of the last 3 confirmed amounts; falls back to the template amount."""
+    amounts = sorted(confirmed_amounts(db, template))
+    if not amounts:
+        return template.amount
+    mid = len(amounts) // 2
+    if len(amounts) % 2 == 1:
+        return amounts[mid]
+    return (amounts[mid - 1] + amounts[mid]) / Decimal(2)
+
+
+def _new_instance_values(db: Session, template: BillTemplate) -> dict[str, object]:
+    """Amount fields for a freshly generated instance.
+
+    Variable-amount templates get a suggested amount flagged as estimated;
+    fixed templates use the template amount.
+    """
+    if template.amount_varies:
+        return {"amount": suggested_amount(db, template), "amount_estimated": True}
+    return {"amount": template.amount}
 
 
 def validate_schedule(
@@ -228,7 +269,7 @@ def backfill_template_instances(
                 bill_id=template.id,
                 period=due_date.strftime("%Y-%m"),
                 due_date=due_date,
-                amount=template.amount,
+                **(_new_instance_values(db, template)),
                 status=PaymentStatus.upcoming,
             )
         )
@@ -318,7 +359,7 @@ def ensure_current_period_instances(db: Session, period: str, user_id: int) -> N
                     bill_id=template.id,
                     period=period,
                     due_date=due_date,
-                    amount=template.amount,
+                    **(_new_instance_values(db, template)),
                     status=PaymentStatus.upcoming,
                 )
             )
@@ -364,7 +405,7 @@ def generate_next_instance(
         bill_id=template.id,
         period=next_due_date.strftime("%Y-%m"),
         due_date=next_due_date,
-        amount=template.amount,
+        **(_new_instance_values(db, template)),
         status=PaymentStatus.upcoming,
     )
     db.add(instance)
@@ -538,7 +579,7 @@ def seed_resumed_occurrences(
             bill_id=template.id,
             period=due_date.strftime("%Y-%m"),
             due_date=due_date,
-            amount=template.amount,
+            **(_new_instance_values(db, template)),
             status=PaymentStatus.upcoming,
         )
         db.add(instance)

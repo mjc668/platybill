@@ -43,6 +43,7 @@ class BillTemplateCreate(BaseModel):
     max_occurrences: int | None = Field(None, ge=1, le=999)  # None = unlimited
     start_date: date | None = None  # weekly anchor ("first payment date")
     amount: Decimal = Decimal("0")
+    amount_varies: bool = False  # usage-based bill: confirm each period
     currency: str = Field("PLN", pattern=_CURRENCY_PATTERN.pattern)
     due_day: int | None = Field(None, ge=1, le=31)
     due_month: int | None = Field(None, ge=1, le=12)  # month for annual/one_off
@@ -65,6 +66,7 @@ class BillTemplateUpdate(BaseModel):
     max_occurrences: int | None = Field(None, ge=1, le=999)  # None = unlimited
     start_date: date | None = None
     amount: Decimal | None = None
+    amount_varies: bool | None = None
     currency: str | None = Field(None, pattern=_CURRENCY_PATTERN.pattern)
     due_day: int | None = Field(None, ge=1, le=31)
     due_month: int | None = Field(None, ge=1, le=12)  # month for annual/one_off
@@ -84,6 +86,7 @@ class BillTemplateOut(BaseModel):
     max_occurrences: int | None = None
     start_date: date | None = None
     amount: Decimal
+    amount_varies: bool = False
     currency: str
     due_day: int | None
     notes: str | None
@@ -119,6 +122,7 @@ class PaymentInstanceOut(BaseModel):
     period: str
     due_date: date
     amount: Decimal
+    amount_estimated: bool = False
     status: PaymentStatus
     paid_at: datetime | None
     paid_amount: Decimal | None
@@ -132,6 +136,17 @@ class PaymentInstanceOut(BaseModel):
     category: CategoryOut
     email_sent_at: datetime | None
     payments: list[PaymentOut] = []
+
+
+class PendingConfirmationOut(PaymentInstanceOut):
+    """An unconfirmed variable-bill instance plus the amounts the
+    suggestion was based on (newest first)."""
+
+    basis_amounts: list[Decimal] = []
+
+
+class InstanceAmountUpdate(BaseModel):
+    amount: Decimal = Field(gt=0)
 
 
 class PaymentCreate(BaseModel):
@@ -186,6 +201,7 @@ class BackupTemplate(BaseModel):
     max_occurrences: int | None = None
     start_date: str | None = None
     amount: Decimal
+    amount_varies: bool = False
     currency: str
     due_day: int | None
     notes: str | None
@@ -241,6 +257,7 @@ class BackupInstance(BaseModel):
     period: str
     due_date: str
     amount: Decimal
+    amount_estimated: bool = False
     status: PaymentStatus
     paid_at: str | None
     paid_amount: Decimal | None

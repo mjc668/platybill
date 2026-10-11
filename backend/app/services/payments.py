@@ -54,6 +54,11 @@ def recalculate_instance(
         instance.status = PaymentStatus.paid
         instance.paid_amount = total
         instance.paid_at = max(p.created_at for p in instance.payments)
+        if instance.amount_estimated:
+            # Paying settles the estimate: the ledger total is the real amount
+            # and becomes part of the history the next suggestion is built on.
+            instance.amount = total
+            instance.amount_estimated = False
 
 
 def record_payment(
