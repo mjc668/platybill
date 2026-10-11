@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CalendarPlus, ChevronRight, ChevronsUpDown, Plus, Search, X } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarPlus,
+  ChevronRight,
+  ChevronsUpDown,
+  FolderTree,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import {
   fetchBills,
@@ -57,6 +66,7 @@ export default function BillsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [stateFilter, setStateFilter] = useState<BillStateFilter>("all");
   const [searchFilter, setSearchFilter] = useState("");
+  const [view, setView] = useState<"due" | "category">("due");
 
   const sortedCategories = sortCategories(categories, locale, tRoot);
   const activeCategories = sortCategories(
@@ -95,6 +105,19 @@ export default function BillsPage() {
       cancelled = true;
     };
   }, [refreshKey, t]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("bills-view");
+    if (stored === "category" || stored === "due") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot post-hydration read of a browser-only preference
+      setView(stored);
+    }
+  }, []);
+
+  function changeView(next: "due" | "category") {
+    setView(next);
+    localStorage.setItem("bills-view", next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -270,15 +293,45 @@ export default function BillsPage() {
               {t("generatePayments")}
             </button>
           </div>
-          {activeCategories.length > 1 && (
-            <button
-              onClick={allCollapsed ? expandAll : collapseAll}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
-            >
-              <ChevronsUpDown size={13} />
-              {allCollapsed ? t("expandAll") : t("collapseAll")}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {view === "category" && activeCategories.length > 1 && (
+              <button
+                onClick={allCollapsed ? expandAll : collapseAll}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+              >
+                <ChevronsUpDown size={13} />
+                {allCollapsed ? t("expandAll") : t("collapseAll")}
+              </button>
+            )}
+            <div className="flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+              <button
+                type="button"
+                aria-pressed={view === "due"}
+                onClick={() => changeView("due")}
+                className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === "due"
+                    ? "bg-blue-700 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <CalendarClock size={13} />
+                {t("viewDue")}
+              </button>
+              <button
+                type="button"
+                aria-pressed={view === "category"}
+                onClick={() => changeView("category")}
+                className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === "category"
+                    ? "bg-blue-700 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <FolderTree size={13} />
+                {t("viewCategory")}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -413,6 +466,42 @@ export default function BillsPage() {
           >
             {t("addFirstBill")}
           </button>
+        </div>
+      ) : filteredTemplates.length > 0 && view === "due" ? (
+        <div className="flex flex-col gap-2" data-testid="bills-next-due">
+          {[...filteredTemplates]
+            .sort((a, b) => {
+              if (a.next_due_date && b.next_due_date) {
+                return (
+                  a.next_due_date.localeCompare(b.next_due_date) ||
+                  a.name.localeCompare(b.name)
+                );
+              }
+              if (a.next_due_date) return -1;
+              if (b.next_due_date) return 1;
+              return a.name.localeCompare(b.name);
+            })
+            .map((tmpl) => (
+              <BillTemplateRow
+                key={tmpl.id}
+                template={tmpl}
+                isExpanded={expandedId === tmpl.id}
+                categories={pickerCategories}
+                onCategoryCreated={handleCategoryCreated}
+                colorClass={categoryColor(colorIndexById.get(tmpl.category.id) ?? 0)}
+                onEditToggle={() => toggleExpand(tmpl.id)}
+                onSave={(data) => handleUpdate(tmpl.id, data)}
+                onArchive={() => setArchiveTarget(tmpl)}
+                nextDue={
+                  tmpl.next_due_date
+                    ? {
+                        date: tmpl.next_due_date,
+                        amount: tmpl.next_due_amount ?? tmpl.amount,
+                      }
+                    : null
+                }
+              />
+            ))}
         </div>
       ) : filteredTemplates.length > 0 ? (
         <div className="flex flex-col gap-6">

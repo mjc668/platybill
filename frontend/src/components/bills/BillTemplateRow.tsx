@@ -21,6 +21,8 @@ import {
 interface Props {
   template: BillTemplateOut;
   isExpanded: boolean;
+  /** Actual next unpaid instance, shown in the "next due" view. */
+  nextDue?: { date: string; amount: string } | null;
   /** Non-archived categories offered by the edit form's picker. */
   categories: Category[];
   onCategoryCreated: (category: Category) => void;
@@ -65,9 +67,15 @@ function formatDueLabel(template: BillTemplateOut, locale: string): string | nul
   return null;
 }
 
+function localTodayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function BillTemplateRow({
   template,
   isExpanded,
+  nextDue,
   categories,
   onCategoryCreated,
   colorClass,
@@ -82,6 +90,7 @@ export default function BillTemplateRow({
 
   const frequency = normalizeBillFrequency(template.frequency);
   const dueLabel = formatDueLabel(template, locale);
+  const nextDueOverdue = nextDue != null && nextDue.date < localTodayIso();
 
   // Paused overrides category color with amber
   const leftBorder = template.is_paused
@@ -131,6 +140,23 @@ export default function BillTemplateRow({
                 ) : (
                   <>{t("dueOn")}&nbsp;{dueLabel}</>
                 )}
+              </span>
+            )}
+            {nextDue && (
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  nextDueOverdue
+                    ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                    : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                }`}
+              >
+                {nextDueOverdue ? t("nextDueOverdue") : t("nextDueOn")}{" "}
+                {new Intl.DateTimeFormat(locale, {
+                  day: "numeric",
+                  month: "short",
+                }).format(new Date(nextDue.date + "T00:00:00"))}
+                {" · "}
+                {nextDue.amount} {template.currency}
               </span>
             )}
           </div>

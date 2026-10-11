@@ -94,6 +94,11 @@ class BillTemplateOut(BaseModel):
     is_paused: bool
     created_at: datetime
     start_period: str | None = None
+    # Earliest unpaid instance (computed by the list endpoint for the
+    # "next due" view); None when every instance is paid or none exists.
+    next_due_date: date | None = None
+    next_due_amount: Decimal | None = None
+    next_due_status: PaymentStatus | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

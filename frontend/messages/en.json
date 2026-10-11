@@ -61,7 +61,7 @@
         "retry": "Try again",
         "currencyNote": "Stats are shown in {currency}. Other currencies in use: {others}.",
         "cardOverdue": "Overdue",
-        "cardNext7d": "Next 7 days",
+        "cardOverdueNext7d": "Overdue + next 7 days",
         "cardNext30d": "Rolling 30 days",
         "cardPaid": "Paid last 30 days",
         "cardCount": "{count, plural, =0 {no bills} one {# bill} other {# bills}}",
@@ -88,6 +88,8 @@
         "miniCalendarLinkLabel": "View payments for {month}"
     },
     "BillsPage": {
+        "viewDue": "Next due",
+        "viewCategory": "By category",
         "title": "Your Bills",
         "subtitle": "Manage your recurring and one-off bills. Each bill generates payment reminders automatically.",
         "newBill": "New Bill",
@@ -186,6 +188,8 @@
         "saveFailed": "Save failed."
     },
     "BillTemplateRow": {
+        "nextDueOn": "Next",
+        "nextDueOverdue": "Overdue",
         "dueOn": "Due on",
         "paused": "Paused",
         "close": "Close",

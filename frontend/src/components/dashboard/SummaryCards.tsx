@@ -51,6 +51,13 @@ export default function SummaryCards({
   const paidPercent =
     due > 0 ? Math.min(Math.max((paid / due) * 100, 0), 100) : 0;
 
+  // Overdue money is still owed in the near term, so the 7-day swatch shows
+  // overdue + the next 7 days combined.
+  const combined7dTotal = (
+    parseAmount(overdue.total) + parseAmount(upcoming7d.total)
+  ).toFixed(2);
+  const combined7dCount = overdue.count + upcoming7d.count;
+
   const cards: CardConfig[] = [
     {
       key: "overdue",
@@ -63,9 +70,9 @@ export default function SummaryCards({
     },
     {
       key: "next-7d",
-      label: t("cardNext7d"),
-      amount: upcoming7d.total,
-      count: upcoming7d.count,
+      label: t("cardOverdueNext7d"),
+      amount: combined7dTotal,
+      count: combined7dCount,
       accent: "border-l-amber-400 dark:border-l-amber-500",
       iconClass: "bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400",
       Icon: CalendarClock,

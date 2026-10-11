@@ -35,6 +35,9 @@ export interface BillTemplateOut {
   is_archived: boolean;
   is_paused: boolean;
   created_at: string;
+  next_due_date: string | null;
+  next_due_amount: string | null;
+  next_due_status: "upcoming" | "overdue" | "paid" | null;
 }
 
 export interface BillTemplateCreate {

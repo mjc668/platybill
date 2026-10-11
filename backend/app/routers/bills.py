@@ -136,7 +136,43 @@ def list_bills(
     )
     if not include_archived:
         q = q.filter(BillTemplate.is_archived.is_(False))
-    return q.order_by(BillTemplate.name).all()
+    templates = q.order_by(BillTemplate.name).all()
+
+    # Next unpaid instance per template (feeds the "next due" bills view).
+    next_by_bill: dict[int, tuple[date, Decimal, PaymentStatus]] = {}
+    if templates:
+        rows = (
+            db.query(
+                PaymentInstance.bill_id,
+                PaymentInstance.due_date,
+                PaymentInstance.amount,
+                PaymentInstance.status,
+            )
+            .filter(
+                PaymentInstance.bill_id.in_([t.id for t in templates]),
+                PaymentInstance.is_deleted.is_(False),
+                PaymentInstance.status != PaymentStatus.paid,
+            )
+            .order_by(PaymentInstance.due_date, PaymentInstance.id)
+            .all()
+        )
+        for bill_id, due_date, amount, status in rows:
+            next_by_bill.setdefault(bill_id, (due_date, amount, status))
+
+    result: list[BillTemplateOut] = []
+    for template in templates:
+        out = BillTemplateOut.model_validate(template)
+        next_due = next_by_bill.get(template.id)
+        if next_due is not None:
+            out = out.model_copy(
+                update={
+                    "next_due_date": next_due[0],
+                    "next_due_amount": next_due[1],
+                    "next_due_status": next_due[2],
+                }
+            )
+        result.append(out)
+    return result
 
 
 @router.post("", response_model=BillTemplateOut, status_code=status.HTTP_201_CREATED)
