@@ -164,3 +164,46 @@ def test_include_overdue_excludes_other_users(client_db):
     )
 
     assert _list(client, bob, current, include_overdue=True) == []
+
+
+def test_window_days_returns_overdue_and_rolling_window(client_db):
+    """The rolling view: all unpaid overdue + everything within +/- 30 days."""
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    from app.models.bill import PaymentInstance, PaymentStatus
+
+    client, db = client_db
+    token = register_and_login(client, "window@test.com")
+    bill_id = _create_bill(client, token)
+
+    today = date.today()
+
+    def add(period: str, due: date, status=PaymentStatus.upcoming, paid=None):
+        inst = PaymentInstance(
+            bill_id=bill_id,
+            period=period,
+            due_date=due,
+            amount=Decimal("10.00"),
+            status=status,
+            paid_amount=paid,
+        )
+        db.add(inst)
+        db.commit()
+        return inst
+
+    add("2025-01", today - timedelta(days=200))  # long overdue: included
+    add("2026-01", today - timedelta(days=10))  # recent overdue: included
+    add("2026-02", today + timedelta(days=5))  # due soon: included
+    add("2026-03", today + timedelta(days=90))  # far future: excluded
+    add("2025-06", today - timedelta(days=120), PaymentStatus.paid, Decimal("10.00"))
+    add("2026-04", today - timedelta(days=3), PaymentStatus.paid, Decimal("10.00"))
+
+    rows = client.get("/bills/payments?window_days=30", headers=auth(token)).json()
+    due_dates = {row["due_date"] for row in rows}
+    assert str(today - timedelta(days=200)) in due_dates
+    assert str(today - timedelta(days=10)) in due_dates
+    assert str(today + timedelta(days=5)) in due_dates
+    assert str(today - timedelta(days=3)) in due_dates  # recently paid
+    assert str(today + timedelta(days=90)) not in due_dates
+    assert str(today - timedelta(days=120)) not in due_dates

@@ -303,6 +303,10 @@
         "loadFailed": "Could not load review items."
     },
     "PaymentsPage": {
+        "scopeDueSoon": "Due soon",
+        "scopeMonth": "Month",
+        "dueSoonTitle": "Due soon",
+        "dueSoonSubtitle": "Overdue + next 30 days",
         "reviewLink": "{count, plural, one {# bill is waiting for review} other {# bills are waiting for review}}",
         "reviewLinkAction": "Review on Bills",
         "title": "Payments",

@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  CalendarClock,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import {
+  fetchDueSoon,
   fetchNeedsConfirmation,
   fetchPayments,
   syncInstances,
@@ -50,6 +52,14 @@ function getCurrentMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
+
+function shiftMonth(month: string, delta: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const total = year * 12 + (monthNumber - 1) + delta;
+  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
+}
+
+const DUE_SOON_WINDOW_DAYS = 30;
 
 function getMonthLabel(year: number, monthIndex: number, locale: string): string {
   const label = new Intl.DateTimeFormat(locale, { month: "short" }).format(
@@ -137,6 +147,7 @@ function PaymentsPageInner() {
   const [xlsxLoadingYear, setXlsxLoadingYear] = useState<number | null>(null);
   const [xlsxError, setXlsxError] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "calendar">("list");
+  const [scope, setScope] = useState<"due" | "month">("due");
   const [statusFilter, setStatusFilter] = useState<PaymentStatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchFilter, setSearchFilter] = useState("");
@@ -148,13 +159,22 @@ function PaymentsPageInner() {
   // synchronous setState inside useEffect is needed.
   const loading = loadedMonth !== selectedMonth;
 
-  const isReadOnly = selectedMonth < currentMonth;
+  const isReadOnly = scope === "month" && selectedMonth < currentMonth;
 
   useEffect(() => {
     let cancelled = false;
-    const isCurrentOrFuture = selectedMonth >= currentMonth;
-    (isCurrentOrFuture ? syncInstances(selectedMonth).catch(() => {}) : Promise.resolve())
-      .then(() => fetchPayments(selectedMonth, isCurrentOrFuture))
+    const load =
+      scope === "due"
+        ? Promise.all([
+            syncInstances(currentMonth).catch(() => {}),
+            syncInstances(shiftMonth(currentMonth, 1)).catch(() => {}),
+          ]).then(() => fetchDueSoon(DUE_SOON_WINDOW_DAYS))
+        : (selectedMonth >= currentMonth
+            ? syncInstances(selectedMonth).catch(() => {})
+            : Promise.resolve()
+          ).then(() => fetchPayments(selectedMonth, selectedMonth >= currentMonth));
+
+    load
       .then((data) => {
         if (!cancelled) {
           setInstances(data);
@@ -172,7 +192,21 @@ function PaymentsPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth, currentMonth, t, reloadToken]);
+  }, [selectedMonth, currentMonth, scope, t, reloadToken]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("payments-scope");
+    if (stored === "month" || stored === "due") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot post-hydration read of a browser-only preference
+      setScope(stored);
+    }
+  }, []);
+
+  function changeScope(next: "due" | "month") {
+    setScope(next);
+    localStorage.setItem("payments-scope", next);
+    if (next === "due") setView("list");
+  }
 
   function handleInstancePaid(updated: PaymentInstanceOut) {
     setInstances((prev) =>
@@ -219,6 +253,7 @@ function PaymentsPageInner() {
     if (monthIndex < 1 || monthIndex > 12) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot post-hydration read of the browser-only deep link; a lazy initializer would risk a hydration mismatch
     setSelectedMonth(monthParam);
+    setScope("month");
     setSelectedYear(parseInt(yearStr, 10));
   }, []);
 
@@ -366,7 +401,11 @@ function PaymentsPageInner() {
           <button
             type="button"
             aria-pressed={view === "calendar"}
-            onClick={() => setView("calendar")}
+            onClick={() => {
+              setScope("month");
+              localStorage.setItem("payments-scope", "month");
+              setView("calendar");
+            }}
             className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
               view === "calendar"
                 ? "bg-blue-700 text-white shadow-sm"
@@ -380,8 +419,39 @@ function PaymentsPageInner() {
         </div>
       </div>
 
-      {/* Month selector */}
+      {/* Period scope + month selector */}
       <div className="mb-6">
+        <div className="mb-4 flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm w-fit dark:border-slate-700 dark:bg-slate-800">
+          <button
+            type="button"
+            aria-pressed={scope === "due"}
+            onClick={() => changeScope("due")}
+            className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+              scope === "due"
+                ? "bg-blue-700 text-white shadow-sm"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <CalendarClock size={14} />
+            {t("scopeDueSoon")}
+          </button>
+          <button
+            type="button"
+            aria-pressed={scope === "month"}
+            onClick={() => changeScope("month")}
+            className={`flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-sm font-medium transition-colors ${
+              scope === "month"
+                ? "bg-blue-700 text-white shadow-sm"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            <CalendarDays size={14} />
+            {t("scopeMonth")}
+          </button>
+        </div>
+
+        {scope === "month" && (
+          <>
         {/* Year navigation */}
         <div className="flex items-center gap-1 mb-3">
           <button
@@ -439,6 +509,8 @@ function PaymentsPageInner() {
             })}
           </div>
         </div>
+          </>
+        )}
 
         {/* Export */}
         <div className="mt-4 flex items-center justify-end gap-3">
@@ -467,19 +539,29 @@ function PaymentsPageInner() {
       <div className="mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
-            {(() => {
-              const label = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(
-                new Date(
-                  parseInt(selectedMonth.split("-")[0]),
-                  parseInt(selectedMonth.split("-")[1]) - 1,
-                ),
-              );
-              return label.charAt(0).toUpperCase() + label.slice(1);
-            })()}
+            {scope === "due"
+              ? t("dueSoonTitle")
+              : (() => {
+                  const label = new Intl.DateTimeFormat(locale, {
+                    month: "long",
+                    year: "numeric",
+                  }).format(
+                    new Date(
+                      parseInt(selectedMonth.split("-")[0]),
+                      parseInt(selectedMonth.split("-")[1]) - 1,
+                    ),
+                  );
+                  return label.charAt(0).toUpperCase() + label.slice(1);
+                })()}
           </h2>
           {isReadOnly && (
             <span className="rounded-md px-1.5 py-0.5 text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400">
               {t("pastMonth")}
+            </span>
+          )}
+          {scope === "due" && (
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              {t("dueSoonSubtitle")}
             </span>
           )}
         </div>

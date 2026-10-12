@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -247,6 +247,7 @@ def create_bill(
 def list_payments(
     month: str | None = None,  # "YYYY-MM"
     include_overdue: bool = Query(False),
+    window_days: int | None = Query(None, ge=1, le=365),
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
@@ -258,7 +259,20 @@ def list_payments(
     # NOTE: instance seeding was intentionally moved to POST /bills/sync-instances
     # so that GET list_payments remains side-effect free.
 
-    if include_overdue:
+    if window_days is not None:
+        # Rolling view: every unpaid overdue row plus everything due (or paid)
+        # within +/- window_days, regardless of calendar month.
+        scope = or_(
+            and_(
+                PaymentInstance.status != PaymentStatus.paid,
+                PaymentInstance.due_date < today,
+            ),
+            and_(
+                PaymentInstance.due_date >= today - timedelta(days=window_days),
+                PaymentInstance.due_date <= today + timedelta(days=window_days),
+            ),
+        )
+    elif include_overdue:
         # The selected month plus unpaid, already-overdue rows from earlier
         # periods, so the current view's Overdue section is complete.
         scope = or_(

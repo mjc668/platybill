@@ -70,6 +70,10 @@ export function fetchPayments(
   return apiFetch<PaymentInstanceOut[]>(query);
 }
 
+export function fetchDueSoon(windowDays = 30): Promise<PaymentInstanceOut[]> {
+  return apiFetch<PaymentInstanceOut[]>(`/bills/payments?window_days=${windowDays}`);
+}
+
 export function markPaid(
   instanceId: number,
   paidAmount: string | null,
