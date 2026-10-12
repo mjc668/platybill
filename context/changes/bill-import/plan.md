@@ -33,7 +33,7 @@ null, status(pending|confirmed|discarded|failed), error, created_at, processed_a
 | --- | --- | --- |
 | `IMPORT_ENABLED` | `false` | master switch for polls; uploads allowed when Ollama configured |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | shared with savings-insights |
-| `OLLAMA_MODEL` | `numind/nuextract3` | primary document→JSON |
+| `OLLAMA_MODEL` | `numind/nuextract3:q4_k_m` | primary document→JSON (GGUF; `:latest` is MLX-only) |
 | `OLLAMA_OCR_MODEL` | `maternion/LightOnOCR-2:1b` | optional two-phase |
 | `OLLAMA_TEXT_MODEL` | `gemma4` | digital-PDF text path + phase 2 |
 | `OLLAMA_TIMEOUT_SECONDS` | `120` | |

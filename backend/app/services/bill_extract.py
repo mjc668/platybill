@@ -60,9 +60,20 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
     "required": ["provider", "amount", "due_date"],
 }
 
+# NuExtract-family models are template extractors: they expect a template with
+# typed fields and produce JSON themselves, so the structured-output schema
+# must be omitted (it makes them return an empty response).
+_NUEXTRACT_TEMPLATE = (
+    "Extract the following fields from this document:\n"
+    '{"provider": "verbatim-string", "amount": "number", '
+    '"currency": "verbatim-string", "due_date": "date-time", '
+    '"period": "verbatim-string", "confidence": "number"}\n'
+    "Return only the JSON object."
+)
+
 _INSTRUCTIONS = (
     "Extract the bill details from this document. Return only the JSON object. "
-    "amount is the total amount due (digits only, no currency symbol). "
+    "amount is the total amount due as a decimal with cents (e.g. 87.30, no currency symbol). "
     "due_date is the payment due date in ISO format (YYYY-MM-DD). "
     "period is the billing period as YYYY-MM when present. "
     "currency is the ISO code when identifiable. "
@@ -79,6 +90,26 @@ class ExtractedBill:
     period: str | None
     confidence: float
     raw_text: str | None = None
+
+
+def _is_nuextract(model: str) -> bool:
+    return "nuextract" in model.lower()
+
+
+def _prompt_and_schema(
+    model: str, *, document_text: str | None = None
+) -> tuple[str, dict[str, Any] | None]:
+    """Prompt + structured-output schema for a model family.
+
+    NuExtract gets its template prompt and no schema; everything else gets the
+    instruction prompt constrained by the JSON schema.
+    """
+    if _is_nuextract(model):
+        return _NUEXTRACT_TEMPLATE, None
+    prompt = _INSTRUCTIONS
+    if document_text is not None:
+        prompt = f"{_INSTRUCTIONS}\n\nDocument text:\n---\n{document_text}\n---"
+    return prompt, EXTRACTION_SCHEMA
 
 
 def _to_decimal(value: Any) -> Decimal | None:
@@ -99,11 +130,51 @@ def _to_date(value: Any) -> date | None:
         return None
 
 
+_MONTHS = {
+    name.lower(): index
+    for index, name in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        start=1,
+    )
+}
+
+
 def _normalize_period(value: Any) -> str | None:
     if not value:
         return None
-    match = re.match(r"^(\d{4})-(\d{2})", str(value))
-    return f"{match.group(1)}-{match.group(2)}" if match else None
+    text = str(value)
+    match = re.match(r"^(\d{4})-(\d{2})", text)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
+    # "01 Oct 2026 - 31 Oct 2026" and friends: take the first month+year.
+    month_match = re.search(r"([A-Za-z]{3,9})\s+(\d{4})", text)
+    if month_match:
+        month = _MONTHS.get(
+            month_match.group(1).lower()[:3]
+            if len(month_match.group(1)) > 3
+            else month_match.group(1).lower()
+        )
+        if month is None:
+            for name, index in _MONTHS.items():
+                if name.startswith(month_match.group(1).lower()[:3]):
+                    month = index
+                    break
+        if month is not None:
+            return f"{month_match.group(2)}-{month:02d}"
+    return None
 
 
 def _parse(payload: dict[str, Any], *, raw_text: str | None = None) -> ExtractedBill:
@@ -166,22 +237,24 @@ def render_pdf_png(data: bytes) -> bytes:
 
 
 def extract_from_text(text: str, *, config: OllamaConfig) -> ExtractedBill:
+    prompt, schema = _prompt_and_schema(config.text_model, document_text=text)
     payload = generate_json(
         config=config,
         model=config.text_model,
-        prompt=f"{_INSTRUCTIONS}\n\nDocument text:\n---\n{text}\n---",
-        schema=EXTRACTION_SCHEMA,
+        prompt=prompt,
+        schema=schema,
     )
     return _parse(payload, raw_text=text)
 
 
 def extract_from_image(image: bytes, *, config: OllamaConfig) -> ExtractedBill:
     encoded = base64.b64encode(image).decode()
+    prompt, schema = _prompt_and_schema(config.model)
     payload = generate_json(
         config=config,
-        prompt=_INSTRUCTIONS,
+        prompt=prompt,
         images=[encoded],
-        schema=EXTRACTION_SCHEMA,
+        schema=schema,
     )
     return _parse(payload)
 

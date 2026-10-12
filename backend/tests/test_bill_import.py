@@ -590,3 +590,63 @@ def test_confirm_period_follows_the_due_date(client_db):
     )
     assert instance.period == first_next.strftime("%Y-%m")
     assert instance.due_date == first_next.replace(day=15)
+
+
+# ---------------------------------------------------------------------------
+# Extractor prompt selection
+# ---------------------------------------------------------------------------
+
+
+def test_nuextract_uses_template_prompt_without_schema():
+    from app.services.bill_extract import (
+        EXTRACTION_SCHEMA,
+        extract_from_image,
+    )
+    from app.services.ollama import OllamaConfig
+
+    config = OllamaConfig(
+        base_url="http://ollama.test",
+        model="numind/nuextract3:q4_k_m",
+        ocr_model="maternion/LightOnOCR-2:1b",
+        text_model="gemma4",
+        timeout=60,
+    )
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={**EXTRACTED, "confidence": 1.0},
+    ) as mock_generate:
+        extract_from_image(PNG, config=config)
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["schema"] is None
+        assert "verbatim-string" in kwargs["prompt"]
+
+
+def test_other_models_use_schema_prompt():
+    from app.services.bill_extract import EXTRACTION_SCHEMA, extract_from_image
+    from app.services.ollama import OllamaConfig
+
+    config = OllamaConfig(
+        base_url="http://ollama.test",
+        model="gemma4:latest",
+        ocr_model="maternion/LightOnOCR-2:1b",
+        text_model="gemma4",
+        timeout=60,
+    )
+    with patch(
+        "app.services.bill_extract.generate_json", return_value=EXTRACTED
+    ) as mock_generate:
+        extract_from_image(PNG, config=config)
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["schema"] == EXTRACTION_SCHEMA
+        assert "verbatim-string" not in kwargs["prompt"]
+
+
+def test_period_normalization_accepts_month_names():
+    from app.services.bill_extract import _normalize_period
+
+    assert _normalize_period("2026-10") == "2026-10"
+    assert _normalize_period("01 Oct 2026 - 31 Oct 2026") == "2026-10"
+    assert _normalize_period("October 2026") == "2026-10"
+    assert _normalize_period("Dec 2026") == "2026-12"
+    assert _normalize_period("gibberish") is None
+    assert _normalize_period(None) is None

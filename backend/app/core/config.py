@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     import_enabled: bool = False
     import_user_email: str | None = None  # target account for polled imports
     ollama_base_url: str | None = None
-    ollama_model: str = "numind/nuextract3"
+    ollama_model: str = "gemma4"
     ollama_ocr_model: str = "maternion/LightOnOCR-2:1b"
     ollama_text_model: str = "gemma4"
     ollama_timeout_seconds: float = 120.0
