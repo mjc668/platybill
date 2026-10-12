@@ -63,9 +63,18 @@ export function scanNow(): Promise<{ directory: unknown; email: unknown }> {
   return apiFetch("/import/scan-now", { method: "POST" });
 }
 
+export interface ImportDraftUpdate {
+  provider?: string | null;
+  amount?: string | null;
+  currency?: string | null;
+  due_date?: string | null;
+  period?: string | null;
+  matched_bill_id?: number | null;
+}
+
 export function updateImportDraft(
   id: number,
-  data: { matched_bill_id?: number | null },
+  data: ImportDraftUpdate,
 ): Promise<ImportDraftOut> {
   return apiFetch<ImportDraftOut>(`/import/drafts/${id}`, {
     method: "PATCH",
