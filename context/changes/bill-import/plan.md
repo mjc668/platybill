@@ -128,3 +128,21 @@ existing httpx.
 Generate a synthetic bill image, upload it through the running container with
 the local Ollama (`gemma4` today, NuExtract3 once pulled), and show the draft →
 confirm flow. Real bills to be tested by the maintainer.
+
+## Status
+
+- Slices 1 (upload/drafts/review/confirm) and 2 (directory poll) shipped on the
+  `ai` branch with 18 backend tests; email-in (slice 3) implemented but not yet
+  exercised against a live mailbox.
+- First-user feedback drove a rework: the separate "needs an amount" queue card
+  and "imported bills" card are now one **ReviewInbox** on Payments with inline
+  amount/date editing, a bill picker that can create the bill from the import,
+  and a "Added to <month> · View" result banner. The estimate and import rows
+  now resolve each other (same period → one action).
+- Bug found during testing: an import creates the period's instance with the
+  document's due date, and the month sync (keyed on due date) added the
+  scheduled occurrence beside it — "adds it twice". Fixed with period-level
+  idempotency for non-weekly templates in all recurrence creation paths
+  (`_period_has_instance`), with regression tests.
+- Remaining: email-in live test, dashboard nudge, currency field in the
+  create-bill mini-form.
