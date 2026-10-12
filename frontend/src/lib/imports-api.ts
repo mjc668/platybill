@@ -27,6 +27,7 @@ export interface ImportStatusOut {
   model_available: boolean | null;
   import_enabled: boolean;
   import_dir: string;
+  import_poll_minutes: number;
   imap_configured: boolean;
   imap_user: string | null;
   pending_count: number;
@@ -53,6 +54,17 @@ export function fetchImportDrafts(status = "pending"): Promise<ImportDraftOut[]>
 
 export function fetchImportStatus(): Promise<ImportStatusOut> {
   return apiFetch<ImportStatusOut>("/import/status");
+}
+
+export function updateImportSettings(data: {
+  enabled?: boolean;
+  directory?: string;
+  poll_minutes?: number;
+}): Promise<ImportStatusOut> {
+  return apiFetch<ImportStatusOut>("/import/settings", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 export function testOllama(): Promise<TestOllamaOut> {

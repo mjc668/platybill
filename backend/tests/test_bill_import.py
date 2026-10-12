@@ -247,6 +247,7 @@ def test_poll_directory_processes_and_dedupes(client_db, tmp_path):
     (watch / "water.png").write_bytes(PNG)
 
     with (
+        patch.object(settings, "data_dir", str(tmp_path)),
         patch.object(settings, "import_enabled", True),
         patch.object(settings, "import_dir", str(watch)),
         patch.object(settings, "import_keep_files", False),

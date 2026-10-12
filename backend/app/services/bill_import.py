@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, PaymentStatus
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
+from app.services import app_settings
 from app.services.bill_extract import ExtractedBill, extract_document, extract_from_text
 from app.services.payments import recalculate_instance
 from app.services.recurrence import _due_date_for_period
@@ -321,9 +322,9 @@ def _fail_file(path: Path, error: Exception) -> None:
 
 
 def poll_directory(db: Session) -> dict[str, Any]:
-    """Process every supported file in IMPORT_DIR once."""
-    if not settings.import_enabled:
-        return {"processed": 0, "skipped": "IMPORT_ENABLED is false"}
+    """Process every supported file in the watched directory once."""
+    if not app_settings.import_enabled(db):
+        return {"processed": 0, "skipped": "folder polling is disabled"}
     user = resolve_import_user(db)
     if user is None:
         return {
@@ -331,7 +332,12 @@ def poll_directory(db: Session) -> dict[str, Any]:
             "error": "Set IMPORT_USER_EMAIL (or have exactly one account) for polled imports",
         }
 
-    root = Path(settings.import_dir)
+    directory = app_settings.import_dir(db)
+    error = app_settings.validate_import_dir(directory)
+    if error:
+        return {"processed": 0, "error": error}
+
+    root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     processed = duplicates = failed = 0
     for path in sorted(root.iterdir()):
@@ -516,3 +522,41 @@ def poll_email(db: Session) -> dict[str, Any]:
         except imaplib.IMAP4.error:  # pragma: no cover — best-effort close
             pass
     return {"processed": processed, "duplicates": skipped, "failed": failed}
+
+
+_last_poll: dict[str, float] = {}
+
+
+def _due(name: str, minutes: int, now: float) -> bool:
+    last = _last_poll.get(name, 0.0)
+    if now - last < minutes * 60:
+        return False
+    _last_poll[name] = now
+    return True
+
+
+def poll_directory_tick(db: Session, *, now: float | None = None) -> None:
+    """Scheduler tick: run the folder poller when its interval has elapsed."""
+    import time
+
+    moment = time.monotonic() if now is None else now
+    if not _due("directory", app_settings.import_poll_minutes(db), moment):
+        return
+    poll_directory(db)
+
+
+def poll_email_tick(db: Session, *, now: float | None = None) -> None:
+    """Scheduler tick: run the email poller when its interval has elapsed."""
+    import time
+
+    moment = time.monotonic() if now is None else now
+    if not settings.imap_configured:
+        return
+    if not _due("email", settings.imap_poll_minutes, moment):
+        return
+    poll_email(db)
+
+
+def reset_poll_timers() -> None:
+    """Test helper: forget when each poller last ran."""
+    _last_poll.clear()

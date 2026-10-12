@@ -15,11 +15,12 @@ from app.schemas.imports import (
     ImportConfirmOut,
     ImportDraftOut,
     ImportDraftUpdate,
+    ImportSettingsIn,
     ImportStatusOut,
     ScanNowOut,
     TestOllamaOut,
 )
-from app.services import ollama
+from app.services import app_settings, ollama
 from app.services.bill_import import (
     ALLOWED_CONTENT_TYPES,
     confirm_draft,
@@ -181,11 +182,7 @@ def discard_import_draft(
     discard_draft(db, draft)
 
 
-@router.get("/status", response_model=ImportStatusOut)
-def import_status(
-    db: Session = Depends(get_db),
-    me: User = Depends(current_user),
-):
+def _status(db: Session, me: User) -> ImportStatusOut:
     reachable = False
     model_available: bool | None = None
     if settings.ollama_configured:
@@ -218,13 +215,45 @@ def import_status(
         ollama_reachable=reachable,
         ollama_model=settings.ollama_model,
         model_available=model_available,
-        import_enabled=settings.import_enabled,
-        import_dir=settings.import_dir,
+        import_enabled=app_settings.import_enabled(db),
+        import_dir=app_settings.import_dir(db),
+        import_poll_minutes=app_settings.import_poll_minutes(db),
         imap_configured=settings.imap_configured,
         imap_user=_mask_email(settings.imap_user),
         pending_count=pending_count,
         last_error=last_failed.error if last_failed else None,
     )
+
+
+@router.get("/status", response_model=ImportStatusOut)
+def import_status(
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+):
+    return _status(db, me)
+
+
+@router.patch("/settings", response_model=ImportStatusOut)
+def update_import_settings(
+    body: ImportSettingsIn,
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+    _rl: None = Depends(rate_limited_by_user("import")),
+):
+    if body.directory is not None:
+        error = app_settings.validate_import_dir(body.directory)
+        if error:
+            raise HTTPException(status_code=422, detail=error)
+        app_settings.set_value(db, app_settings.IMPORT_DIR_KEY, body.directory)
+    if body.enabled is not None:
+        app_settings.set_value(
+            db, app_settings.IMPORT_ENABLED_KEY, "1" if body.enabled else "0"
+        )
+    if body.poll_minutes is not None:
+        app_settings.set_value(
+            db, app_settings.IMPORT_POLL_MINUTES_KEY, str(body.poll_minutes)
+        )
+    return _status(db, me)
 
 
 @router.post("/test-ollama", response_model=TestOllamaOut)

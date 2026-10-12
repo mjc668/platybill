@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:////data/platybill.db"
 
+    # Root of the mounted data volume; import paths are confined to it.
+    data_dir: str = "/data"
+
     environment: str = "development"
     cookie_secure: bool = False
     trust_proxy: bool = False

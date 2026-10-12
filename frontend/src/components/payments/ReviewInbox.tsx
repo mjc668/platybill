@@ -296,6 +296,9 @@ function ImportRow({
     draft.matched_bill_id != null ? String(draft.matched_bill_id) : "",
   );
   const [creating, setCreating] = useState(draft.matched_bill_id === null);
+  const [frequency, setFrequency] = useState<
+    "monthly" | "weekly" | "annual" | "one_off"
+  >("monthly");
   const [newName, setNewName] = useState(draft.provider ?? draft.filename ?? "");
   const [newCategoryId, setNewCategoryId] = useState<string>(
     defaultCategoryId != null ? String(defaultCategoryId) : "",
@@ -305,8 +308,9 @@ function ImportRow({
   );
 
   const amountValid = Number.isFinite(parseFloat(amount)) && parseFloat(amount) > 0;
+  const weeklyAnchorOk = frequency !== "weekly" || dueDate !== "";
   const canConfirm = creating
-    ? newName.trim().length > 0 && newCategoryId !== "" && amountValid
+    ? newName.trim().length > 0 && newCategoryId !== "" && amountValid && weeklyAnchorOk
     : billId !== "" && amountValid;
 
   async function handleConfirm() {
@@ -316,13 +320,18 @@ function ImportRow({
     try {
       let targetBillId = billId === "" ? null : Number(billId);
       if (creating) {
+        const dueDay = newDueDay === "" ? null : parseInt(newDueDay, 10);
+        const dueMonth = dueDate ? parseInt(dueDate.slice(5, 7), 10) : null;
         const created = await createBill({
           name: newName.trim(),
           category_id: Number(newCategoryId),
-          frequency: "monthly",
+          frequency,
           amount: parseFloat(amount).toFixed(2),
           currency: draft.currency ?? defaultCurrency ?? undefined,
-          due_day: newDueDay === "" ? null : parseInt(newDueDay, 10),
+          due_day: frequency === "weekly" ? null : dueDay,
+          due_month:
+            frequency === "annual" || frequency === "one_off" ? dueMonth : null,
+          start_date: frequency === "weekly" ? dueDate || null : null,
         });
         targetBillId = created.id;
       } else {
@@ -469,19 +478,41 @@ function ImportRow({
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor={`new-day-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
-              {t("newBillDueDay")}
+            <label htmlFor={`new-freq-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
+              {t("newBillFrequency")}
             </label>
-            <input
-              id={`new-day-${draft.id}`}
-              type="number"
-              min="1"
-              max="31"
-              value={newDueDay}
-              onChange={(e) => setNewDueDay(e.target.value)}
-              className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-            />
+            <select
+              id={`new-freq-${draft.id}`}
+              value={frequency}
+              onChange={(e) =>
+                setFrequency(
+                  e.target.value as "monthly" | "weekly" | "annual" | "one_off",
+                )
+              }
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <option value="monthly">{t("frequency.monthly")}</option>
+              <option value="weekly">{t("frequency.weekly")}</option>
+              <option value="annual">{t("frequency.annual")}</option>
+              <option value="one_off">{t("frequency.one_off")}</option>
+            </select>
           </div>
+          {frequency !== "weekly" && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor={`new-day-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
+                {t("newBillDueDay")}
+              </label>
+              <input
+                id={`new-day-${draft.id}`}
+                type="number"
+                min="1"
+                max="31"
+                value={newDueDay}
+                onChange={(e) => setNewDueDay(e.target.value)}
+                className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+          )}
           <p className="flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500">
             <Plus size={12} />
             {t("newBillHint")}

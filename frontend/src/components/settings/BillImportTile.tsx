@@ -1,14 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, FileSearch, Loader2, RefreshCw, Server } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  FileSearch,
+  Loader2,
+  RefreshCw,
+  Save,
+  Server,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   fetchImportStatus,
   scanNow,
   testOllama,
+  updateImportSettings,
   type ImportStatusOut,
 } from "@/lib/imports-api";
+import { Switch } from "@/components/ui/Switch";
 import { Tile } from "./Tile";
 
 function StatusRow({
@@ -48,11 +58,15 @@ export function BillImportTile({
 
   const [status, setStatus] = useState<ImportStatusOut | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"test" | "scan" | null>(null);
+  const [busy, setBusy] = useState<"test" | "scan" | "save" | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(
     null,
   );
   const [refreshToken, setRefreshToken] = useState(0);
+
+  const [enabled, setEnabled] = useState(false);
+  const [directory, setDirectory] = useState("/data/import");
+  const [minutes, setMinutes] = useState("15");
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +74,9 @@ export function BillImportTile({
       .then((data) => {
         if (cancelled) return;
         setStatus(data);
+        setEnabled(data.import_enabled);
+        setDirectory(data.import_dir);
+        setMinutes(String(data.import_poll_minutes));
         setLoading(false);
       })
       .catch(() => {
@@ -69,6 +86,40 @@ export function BillImportTile({
       cancelled = true;
     };
   }, [refreshToken]);
+
+  const minutesValue = parseInt(minutes, 10);
+  const minutesValid = Number.isFinite(minutesValue) && minutesValue >= 1 && minutesValue <= 1440;
+  const directoryValid = directory.startsWith("/");
+  const dirty =
+    status !== null &&
+    (enabled !== status.import_enabled ||
+      directory !== status.import_dir ||
+      minutesValue !== status.import_poll_minutes);
+
+  async function handleSave() {
+    if (!minutesValid || !directoryValid) return;
+    setBusy("save");
+    setMessage(null);
+    try {
+      const updated = await updateImportSettings({
+        enabled,
+        directory,
+        poll_minutes: minutesValue,
+      });
+      setStatus(updated);
+      setEnabled(updated.import_enabled);
+      setDirectory(updated.import_dir);
+      setMinutes(String(updated.import_poll_minutes));
+      setMessage({ tone: "ok", text: ti("saved") });
+    } catch (err) {
+      setMessage({
+        tone: "error",
+        text: err instanceof Error ? err.message : ti("saveFailed"),
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function handleTest() {
     setBusy("test");
@@ -113,6 +164,9 @@ export function BillImportTile({
       ? "warn"
       : "off";
 
+  const inputClass =
+    "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
+
   return (
     <Tile
       color="blue"
@@ -145,15 +199,6 @@ export function BillImportTile({
               tone={ollamaTone}
             />
             <StatusRow
-              label={ti("watchDirLabel")}
-              value={
-                status.import_enabled
-                  ? status.import_dir
-                  : `${status.import_dir} · ${ti("disabled")}`
-              }
-              tone={status.import_enabled ? "ok" : "off"}
-            />
-            <StatusRow
               label={ti("imapLabel")}
               value={
                 status.imap_configured
@@ -169,6 +214,65 @@ export function BillImportTile({
             />
           </div>
 
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+            <Switch
+              checked={enabled}
+              onChange={setEnabled}
+              label={ti("pollToggle")}
+            />
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="import-directory"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("directoryLabel")}
+                </label>
+                <input
+                  id="import-directory"
+                  value={directory}
+                  onChange={(e) => setDirectory(e.target.value)}
+                  className={`${inputClass} w-64`}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="import-minutes"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("pollMinutesLabel")}
+                </label>
+                <input
+                  id="import-minutes"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={minutes}
+                  onChange={(e) => setMinutes(e.target.value)}
+                  className={`${inputClass} w-24`}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={busy !== null || !dirty || !minutesValid || !directoryValid}
+                className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "save" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Save size={13} />
+                )}
+                {ti("save")}
+              </button>
+            </div>
+            {!directoryValid && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {ti("directoryInvalid")}
+              </p>
+            )}
+          </div>
+
           {status.last_error && (
             <p className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
               <AlertTriangle size={13} className="mt-0.5 shrink-0" />
@@ -178,12 +282,13 @@ export function BillImportTile({
 
           {message && (
             <p
-              className={`rounded-xl px-3 py-2 text-xs ${
+              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs ${
                 message.tone === "ok"
                   ? "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
                   : "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
               }`}
             >
+              {message.tone === "ok" && <Check size={12} />}
               {message.text}
             </p>
           )}
@@ -205,7 +310,7 @@ export function BillImportTile({
             <button
               type="button"
               onClick={handleScan}
-              disabled={busy !== null || !status.import_enabled}
+              disabled={busy !== null || !enabled}
               className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
             >
               {busy === "scan" ? (

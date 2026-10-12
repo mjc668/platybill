@@ -14,7 +14,7 @@ logging.getLogger("app").setLevel(logging.INFO)
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.routers import auth, bills, categories, export, imports, stats
-from app.services.bill_import import poll_directory, poll_email
+from app.services.bill_import import poll_directory_tick, poll_email_tick
 from app.services.reminder_job import send_catchup_reminders, send_daily_reminders
 from app.services.snapshot_cleanup import cleanup_old_snapshots
 
@@ -34,20 +34,20 @@ async def lifespan(app: FastAPI):
         hour=3,
         args=[SessionLocal],
     )
-    if settings.import_enabled:
-        scheduler.add_job(
-            poll_directory,
-            "interval",
-            minutes=settings.import_poll_minutes,
-            args=[SessionLocal],
-        )
-    if settings.imap_configured:
-        scheduler.add_job(
-            poll_email,
-            "interval",
-            minutes=settings.imap_poll_minutes,
-            args=[SessionLocal],
-        )
+    # Pollers tick every minute and decide internally whether their configured
+    # interval has elapsed, so Settings changes apply without a restart.
+    scheduler.add_job(
+        poll_directory_tick,
+        "interval",
+        minutes=1,
+        args=[SessionLocal],
+    )
+    scheduler.add_job(
+        poll_email_tick,
+        "interval",
+        minutes=1,
+        args=[SessionLocal],
+    )
     scheduler.start()
     # Run once on startup (non-blocking) so the current hour's reminders aren't missed after a restart
     loop = asyncio.get_event_loop()

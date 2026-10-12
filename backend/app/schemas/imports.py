@@ -45,6 +45,12 @@ class ImportConfirmOut(BaseModel):
     created_instance: bool
 
 
+class ImportSettingsIn(BaseModel):
+    enabled: bool | None = None
+    directory: str | None = Field(None, max_length=255)
+    poll_minutes: int | None = Field(None, ge=1, le=1440)
+
+
 class ImportStatusOut(BaseModel):
     ollama_configured: bool
     ollama_reachable: bool
@@ -52,6 +58,7 @@ class ImportStatusOut(BaseModel):
     model_available: bool | None
     import_enabled: bool
     import_dir: str
+    import_poll_minutes: int
     imap_configured: bool
     imap_user: str | None
     pending_count: int
