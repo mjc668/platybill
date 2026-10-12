@@ -480,3 +480,67 @@ def test_confirm_explicit_other_period_ignores_pending_estimate(client_db):
     assert instances[0].amount_estimated is True  # estimate untouched
     assert instances[1].period == first_next.strftime("%Y-%m")
     assert instances[1].amount == Decimal("91.10")
+
+
+def test_sync_does_not_duplicate_import_created_instance(client_db):
+    """Import-created instances carry the document's due date; the month sync
+    must not add the scheduled occurrence beside them."""
+    client, db = client_db
+    token = register_and_login(client, "imp17@test.com")
+    bill = _create_bill(client, token)  # schedule due day 12
+
+    today = date.today()
+    first_next = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+    period = first_next.strftime("%Y-%m")
+    document = {
+        **EXTRACTED,
+        "amount": 91.10,
+        "period": period,
+        "due_date": first_next.replace(day=20).isoformat(),
+    }
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=document),
+    ):
+        draft = _upload(client, token).json()
+    r = client.post(
+        f"/import/drafts/{draft['id']}/confirm", json={}, headers=auth(token)
+    )
+    assert r.status_code == 200, r.text
+
+    # What the payments page does when the month is viewed.
+    client.post(f"/bills/sync-instances?month={period}", headers=auth(token))
+
+    rows = db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill["id"]).all()
+    assert len(rows) == 1
+    assert rows[0].due_date == first_next.replace(day=20)
+    assert rows[0].amount == Decimal("91.10")
+    assert rows[0].amount_estimated is False
+
+
+def test_sync_keeps_single_instance_after_estimate_confirm(client_db):
+    """Confirming a same-period import leaves one instance; sync stays idempotent."""
+    client, db = client_db
+    token = register_and_login(client, "imp18@test.com")
+    bill = _create_bill(client, token)
+    sync_payments(client, token)
+
+    today = date.today()
+    document = {
+        **EXTRACTED,
+        "amount": 87.30,
+        "period": today.strftime("%Y-%m"),
+        "due_date": today.replace(day=20).isoformat(),
+    }
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=document),
+    ):
+        draft = _upload(client, token).json()
+    client.post(f"/import/drafts/{draft['id']}/confirm", json={}, headers=auth(token))
+    sync_payments(client, token)
+
+    rows = db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill["id"]).all()
+    assert len(rows) == 1
+    assert rows[0].amount == Decimal("87.30")
+    assert rows[0].amount_estimated is False

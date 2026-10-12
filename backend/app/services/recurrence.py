@@ -57,6 +57,24 @@ def _new_instance_values(db: Session, template: BillTemplate) -> dict[str, objec
     return {"amount": template.amount}
 
 
+def _period_has_instance(db: Session, template: BillTemplate, period: str) -> bool:
+    """Any row (including a soft-deleted tombstone) for this bill+period.
+
+    Non-weekly bills have at most one instance per period, but an import can
+    create it with the document's due date instead of the schedule's; keying
+    sync on the period stops a duplicate row appearing beside it.
+    """
+    return (
+        db.query(PaymentInstance.id)
+        .filter(
+            PaymentInstance.bill_id == template.id,
+            PaymentInstance.period == period,
+        )
+        .first()
+        is not None
+    )
+
+
 def validate_schedule(
     frequency: BillFrequency,
     interval_count: int,
@@ -245,6 +263,11 @@ def backfill_template_instances(
     candidate_due_dates: list[date] = []
     period = from_period
     while period <= to_period:
+        if template.frequency != BillFrequency.weekly and _period_has_instance(
+            db, template, period
+        ):
+            period = _add_months(period, 1)
+            continue
         candidate_due_dates.extend(_occurrences_in_period(template, period))
         period = _add_months(period, 1)
 
@@ -344,6 +367,10 @@ def ensure_current_period_instances(db: Session, period: str, user_id: int) -> N
         occurrences = _occurrences_in_period(template, period)
         if not occurrences:
             continue
+        if template.frequency != BillFrequency.weekly and _period_has_instance(
+            db, template, period
+        ):
+            continue
         existing_due_dates = {
             row.due_date
             for row in db.query(PaymentInstance.due_date).filter(
@@ -388,6 +415,18 @@ def generate_next_instance(
 
     if _cap_reached(template, next_due_date):
         return None
+
+    if template.frequency != BillFrequency.weekly:
+        existing_period = (
+            db.query(PaymentInstance)
+            .filter(
+                PaymentInstance.bill_id == template.id,
+                PaymentInstance.period == next_period,
+            )
+            .first()
+        )
+        if existing_period:
+            return existing_period
 
     # idempotent: skip if already exists
     existing = (
@@ -571,9 +610,21 @@ def seed_resumed_occurrences(
             PaymentInstance.bill_id == template.id
         )
     }
+    existing_periods = (
+        {
+            row.period
+            for row in db.query(PaymentInstance.period).filter(
+                PaymentInstance.bill_id == template.id
+            )
+        }
+        if template.frequency != BillFrequency.weekly
+        else set()
+    )
     created: list[PaymentInstance] = []
     for due_date in candidates:
         if due_date in existing_dates:
+            continue
+        if due_date.strftime("%Y-%m") in existing_periods:
             continue
         instance = PaymentInstance(
             bill_id=template.id,
