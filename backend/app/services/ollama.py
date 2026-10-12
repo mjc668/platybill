@@ -74,9 +74,14 @@ def generate_json(
 
     try:
         body = response.json()
-        raw = body["response"]
-    except (ValueError, KeyError, TypeError) as exc:
+        # Thinking models (e.g. qwen3-vl with a format schema) can put the
+        # structured output in `thinking` and leave `response` empty; prefer
+        # the answer but fall back so both layouts work.
+        raw = body.get("response") or body.get("thinking")
+    except (ValueError, TypeError) as exc:
         raise OllamaBadResponse("Ollama returned no response field") from exc
+    if not raw:
+        raise OllamaBadResponse("Ollama returned no response field")
 
     try:
         parsed = json.loads(raw)

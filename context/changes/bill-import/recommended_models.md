@@ -18,17 +18,18 @@
   (OCR → text model), used automatically when the primary parse fails
 - `OLLAMA_TEXT_MODEL=gemma4` — digital-PDF text extraction and phase 2
 
-## Benchmark (three synthetic utility bills, one machine)
+## Benchmark (three synthetic utility bills, through the app)
 
-| Model | Fields correct | Notes |
-| --- | --- | --- |
-| `gemma4` | 9/9 (amount, due, period) | most consistent; currency not read |
-| `numind/nuextract3:q4_k_m` | 8/9 | fast (3s warm), reads currency; missed a due date on one bill. Needs its template prompt — supported natively now (`_prompt_and_schema`) |
-| `minicpm-v` | 7/9 | dropped a decimal (`87.30` → `8730`, 100× error). Not recommended |
+| Model | Score | Warm speed | Notes |
+| --- | --- | --- | --- |
+| `gemma4` | 9/9 | ~0.5s | current default; currency not read |
+| `qwen3-vl:8b` | 9/9 | ~0.9s | flagship VLM; needs the `thinking`-field fallback (handled in `ollama.generate_json`) |
+| `granite3.2-vision:2b` | 9/9 | ~6s | 2.4 GB document specialist — the pick for low-VRAM hosts |
+| `numind/nuextract3:q4_k_m` | 8/9 | ~3s | fast, reads currency; missed a due date once. Template prompt supported natively |
+| `minicpm-v` | 7/9 | ~4s | dropped a decimal (`87.30` → `8730`). Not recommended |
 
-Default stays `gemma4`; NuExtract3 is the fast alternative once its date
-handling proves out. All imports are confirm-first, so a misread is caught in
-review either way.
+All imports are confirm-first, so a misread is caught in review. Defaults stay
+`gemma4`; `qwen3-vl:8b` and `granite3.2-vision:2b` are equally accurate picks.
 
 ## Extraction settings
 

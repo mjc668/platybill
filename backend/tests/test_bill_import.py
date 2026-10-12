@@ -650,3 +650,30 @@ def test_period_normalization_accepts_month_names():
     assert _normalize_period("Dec 2026") == "2026-12"
     assert _normalize_period("gibberish") is None
     assert _normalize_period(None) is None
+
+
+def test_thinking_field_fallback(monkeypatch):
+    """Models that emit structured output in `thinking` are still parsed."""
+    import httpx
+
+    from app.services.ollama import OllamaConfig, generate_json
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "response": "",
+                "thinking": '{"provider": "X", "amount": 1.0, "due_date": "2026-01-01"}',
+            }
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResponse())
+    config = OllamaConfig(
+        base_url="http://ollama.test",
+        model="qwen3-vl:8b",
+        ocr_model="x",
+        text_model="x",
+        timeout=10,
+    )
+    result = generate_json(config=config, prompt="p")
+    assert result["provider"] == "X"
