@@ -298,7 +298,10 @@ def test_message_drafts_from_email(client_db):
     message.add_attachment(PNG, maintype="image", subtype="png", filename="bill.png")
     raw = message.as_bytes()
 
-    with patch("app.services.bill_extract.generate_json", return_value=EXTRACTED):
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=EXTRACTED),
+    ):
         drafts, skipped = _message_drafts(db, user, raw)
         assert len(drafts) == 1
         assert skipped == 0

@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from app.core.config import settings
+
+@dataclass(frozen=True)
+class OllamaConfig:
+    """Resolved Ollama connection settings (DB override → env)."""
+
+    base_url: str
+    model: str
+    ocr_model: str
+    text_model: str
+    timeout: float
 
 
 class OllamaError(RuntimeError):
@@ -24,8 +34,9 @@ class OllamaBadResponse(OllamaError):
 
 def generate_json(
     *,
-    model: str,
+    config: OllamaConfig,
     prompt: str,
+    model: str | None = None,
     images: list[str] | None = None,
     schema: dict[str, Any] | None = None,
     timeout: float | None = None,
@@ -33,14 +44,11 @@ def generate_json(
     """Run a single non-streaming generation and parse the JSON response.
 
     `images` are base64 strings; `schema` becomes Ollama's structured-output
-    `format` so the model is constrained to valid JSON.
+    `format` so the model is constrained to valid JSON. `model` overrides the
+    config's primary model (used for the OCR/text phases).
     """
-    base_url = settings.ollama_base_url
-    if not base_url:
-        raise OllamaUnavailable("Ollama is not configured (set OLLAMA_BASE_URL)")
-
     payload: dict[str, Any] = {
-        "model": model,
+        "model": model or config.model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0},
@@ -52,9 +60,9 @@ def generate_json(
 
     try:
         response = httpx.post(
-            f"{base_url}/api/generate",
+            f"{config.base_url}/api/generate",
             json=payload,
-            timeout=timeout if timeout is not None else settings.ollama_timeout_seconds,
+            timeout=timeout if timeout is not None else config.timeout,
         )
     except httpx.HTTPError as exc:
         raise OllamaUnavailable(f"Ollama request failed: {exc}") from exc
@@ -79,11 +87,8 @@ def generate_json(
     return parsed
 
 
-def list_models(timeout: float = 5.0) -> list[str]:
+def list_models(*, base_url: str, timeout: float = 5.0) -> list[str]:
     """Names of locally available models; raises OllamaUnavailable on failure."""
-    base_url = settings.ollama_base_url
-    if not base_url:
-        raise OllamaUnavailable("Ollama is not configured (set OLLAMA_BASE_URL)")
     try:
         response = httpx.get(f"{base_url}/api/tags", timeout=timeout)
     except httpx.HTTPError as exc:

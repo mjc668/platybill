@@ -70,10 +70,10 @@ def upload_bill(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    if not settings.ollama_configured:
+    if app_settings.ollama_config(db) is None:
         raise HTTPException(
             status_code=503,
-            detail="Bill import is not configured (set OLLAMA_BASE_URL)",
+            detail="Bill import is not configured (set the Ollama URL in Settings)",
         )
     content_type = file.content_type
     if content_type and content_type not in ALLOWED_CONTENT_TYPES:
@@ -183,13 +183,15 @@ def discard_import_draft(
 
 
 def _status(db: Session, me: User) -> ImportStatusOut:
+    config = app_settings.ollama_config(db)
     reachable = False
     model_available: bool | None = None
-    if settings.ollama_configured:
+    available_models: list[str] = []
+    if config is not None:
         try:
-            models = ollama.list_models()
+            available_models = ollama.list_models(base_url=config.base_url)
             reachable = True
-            model_available = settings.ollama_model in models
+            model_available = config.model in available_models
         except ollama.OllamaError:
             reachable = False
 
@@ -211,10 +213,12 @@ def _status(db: Session, me: User) -> ImportStatusOut:
         .first()
     )
     return ImportStatusOut(
-        ollama_configured=settings.ollama_configured,
+        ollama_configured=config is not None,
+        ollama_base_url=config.base_url if config is not None else None,
         ollama_reachable=reachable,
-        ollama_model=settings.ollama_model,
+        ollama_model=config.model if config is not None else settings.ollama_model,
         model_available=model_available,
+        available_models=available_models,
         import_enabled=app_settings.import_enabled(db),
         import_dir=app_settings.import_dir(db),
         import_poll_minutes=app_settings.import_poll_minutes(db),
@@ -253,33 +257,46 @@ def update_import_settings(
         app_settings.set_value(
             db, app_settings.IMPORT_POLL_MINUTES_KEY, str(body.poll_minutes)
         )
+    if body.ollama_base_url is not None:
+        url = body.ollama_base_url.rstrip("/")
+        error = app_settings.validate_ollama_url(url)
+        if error:
+            raise HTTPException(status_code=422, detail=error)
+        app_settings.set_value(db, app_settings.OLLAMA_BASE_URL_KEY, url)
+    if body.ollama_model is not None:
+        model = body.ollama_model.strip()
+        if not model:
+            raise HTTPException(status_code=422, detail="Model must not be empty")
+        app_settings.set_value(db, app_settings.OLLAMA_MODEL_KEY, model)
     return _status(db, me)
 
 
 @router.post("/test-ollama", response_model=TestOllamaOut)
 def test_ollama(
+    db: Session = Depends(get_db),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    if not settings.ollama_configured:
+    config = app_settings.ollama_config(db)
+    if config is None:
         return TestOllamaOut(
             ok=False,
             model=settings.ollama_model,
             model_available=False,
-            error="Ollama is not configured (set OLLAMA_BASE_URL)",
+            error="Ollama is not configured (set the URL in Settings)",
         )
     try:
-        models = ollama.list_models()
+        models = ollama.list_models(base_url=config.base_url)
     except ollama.OllamaError as exc:
         return TestOllamaOut(
             ok=False,
-            model=settings.ollama_model,
+            model=config.model,
             model_available=False,
             error=str(exc),
         )
     return TestOllamaOut(
         ok=True,
-        model=settings.ollama_model,
-        model_available=settings.ollama_model in models,
+        model=config.model,
+        model_available=config.model in models,
     )
 
 

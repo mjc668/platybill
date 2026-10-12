@@ -67,6 +67,8 @@ export function BillImportTile({
   const [enabled, setEnabled] = useState(false);
   const [directory, setDirectory] = useState("/data/import");
   const [minutes, setMinutes] = useState("15");
+  const [ollamaUrl, setOllamaUrl] = useState("");
+  const [ollamaModel, setOllamaModel] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +79,8 @@ export function BillImportTile({
         setEnabled(data.import_enabled);
         setDirectory(data.import_dir);
         setMinutes(String(data.import_poll_minutes));
+        setOllamaUrl(data.ollama_base_url ?? "");
+        setOllamaModel(data.ollama_model);
         setLoading(false);
       })
       .catch(() => {
@@ -90,14 +94,17 @@ export function BillImportTile({
   const minutesValue = parseInt(minutes, 10);
   const minutesValid = Number.isFinite(minutesValue) && minutesValue >= 1 && minutesValue <= 1440;
   const directoryValid = directory.startsWith("/");
+  const urlValid = ollamaUrl === "" || /^https?:\/\//.test(ollamaUrl);
   const dirty =
     status !== null &&
     (enabled !== status.import_enabled ||
       directory !== status.import_dir ||
-      minutesValue !== status.import_poll_minutes);
+      minutesValue !== status.import_poll_minutes ||
+      ollamaUrl !== (status.ollama_base_url ?? "") ||
+      ollamaModel !== status.ollama_model);
 
   async function handleSave() {
-    if (!minutesValid || !directoryValid) return;
+    if (!minutesValid || !directoryValid || !urlValid || ollamaModel === "") return;
     setBusy("save");
     setMessage(null);
     try {
@@ -105,11 +112,15 @@ export function BillImportTile({
         enabled,
         directory,
         poll_minutes: minutesValue,
+        ollama_base_url: ollamaUrl,
+        ollama_model: ollamaModel,
       });
       setStatus(updated);
       setEnabled(updated.import_enabled);
       setDirectory(updated.import_dir);
       setMinutes(String(updated.import_poll_minutes));
+      setOllamaUrl(updated.ollama_base_url ?? "");
+      setOllamaModel(updated.ollama_model);
       setMessage({ tone: "ok", text: ti("saved") });
     } catch (err) {
       setMessage({
@@ -223,6 +234,46 @@ export function BillImportTile({
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <label
+                  htmlFor="ollama-url"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("ollamaUrlLabel")}
+                </label>
+                <input
+                  id="ollama-url"
+                  value={ollamaUrl}
+                  placeholder="http://host:11434"
+                  onChange={(e) => setOllamaUrl(e.target.value)}
+                  className={`${inputClass} w-64`}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="ollama-model"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("ollamaModelLabel")}
+                </label>
+                <select
+                  id="ollama-model"
+                  value={ollamaModel}
+                  onChange={(e) => setOllamaModel(e.target.value)}
+                  className={`${inputClass} w-48`}
+                >
+                  {status.available_models.length === 0 && ollamaModel !== "" && (
+                    <option value={ollamaModel}>{ollamaModel}</option>
+                  )}
+                  {status.available_models.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label
                   htmlFor="import-directory"
                   className="text-xs text-slate-500 dark:text-slate-400"
                 >
@@ -255,7 +306,14 @@ export function BillImportTile({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={busy !== null || !dirty || !minutesValid || !directoryValid}
+                disabled={
+                  busy !== null ||
+                  !dirty ||
+                  !minutesValid ||
+                  !directoryValid ||
+                  !urlValid ||
+                  ollamaModel === ""
+                }
                 className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy === "save" ? (
@@ -269,6 +327,11 @@ export function BillImportTile({
             {!directoryValid && (
               <p className="text-xs text-amber-700 dark:text-amber-400">
                 {ti("directoryInvalid")}
+              </p>
+            )}
+            {!urlValid && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {ti("ollamaUrlInvalid")}
               </p>
             )}
           </div>

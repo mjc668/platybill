@@ -26,6 +26,7 @@ from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
 from app.services import app_settings
 from app.services.bill_extract import ExtractedBill, extract_document, extract_from_text
+from app.services.ollama import OllamaUnavailable
 from app.services.payments import recalculate_instance
 from app.services.recurrence import _due_date_for_period
 
@@ -154,7 +155,12 @@ def import_document(
         is not None
     ):
         return None
-    extracted = extract_document(data, content_type=content_type, filename=filename)
+    config = app_settings.ollama_config(db)
+    if config is None:
+        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+    extracted = extract_document(
+        data, config=config, content_type=content_type, filename=filename
+    )
     return create_draft(
         db,
         user_id=user_id,
@@ -174,7 +180,10 @@ def import_text(
     filename: str | None,
     source: ImportSource,
 ) -> ImportDraft | None:
-    extracted = extract_from_text(text)
+    config = app_settings.ollama_config(db)
+    if config is None:
+        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+    extracted = extract_from_text(text, config=config)
     return create_draft(
         db,
         user_id=user_id,
@@ -454,7 +463,12 @@ def _import_email_document(
         is not None
     ):
         return None
-    extracted = extract_document(payload, content_type=content_type, filename=filename)
+    config = app_settings.ollama_config(db)
+    if config is None:
+        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+    extracted = extract_document(
+        payload, config=config, content_type=content_type, filename=filename
+    )
     return create_draft(
         db,
         user_id=user.id,

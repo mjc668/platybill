@@ -13,10 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.app_setting import AppSetting
+from app.services.ollama import OllamaConfig
 
 IMPORT_ENABLED_KEY = "import.enabled"
 IMPORT_DIR_KEY = "import.dir"
 IMPORT_POLL_MINUTES_KEY = "import.poll_minutes"
+OLLAMA_BASE_URL_KEY = "ollama.base_url"
+OLLAMA_MODEL_KEY = "ollama.model"
 
 MIN_POLL_MINUTES = 1
 MAX_POLL_MINUTES = 1440
@@ -82,4 +85,32 @@ def validate_import_dir(path: str) -> str | None:
         return f"Directory must live inside {settings.data_dir}"
     if os.path.exists(path) and not os.path.isdir(path):
         return "Path exists but is not a directory"
+    return None
+
+
+def ollama_base_url(db: Session) -> str | None:
+    return get_value(db, OLLAMA_BASE_URL_KEY) or settings.ollama_base_url
+
+
+def ollama_model(db: Session) -> str:
+    return get_value(db, OLLAMA_MODEL_KEY) or settings.ollama_model
+
+
+def ollama_config(db: Session) -> OllamaConfig | None:
+    """Effective Ollama connection settings, or None when unconfigured."""
+    base_url = ollama_base_url(db)
+    if not base_url:
+        return None
+    return OllamaConfig(
+        base_url=base_url,
+        model=ollama_model(db),
+        ocr_model=settings.ollama_ocr_model,
+        text_model=settings.ollama_text_model,
+        timeout=settings.ollama_timeout_seconds,
+    )
+
+
+def validate_ollama_url(url: str) -> str | None:
+    if not url.startswith(("http://", "https://")):
+        return "URL must start with http:// or https://"
     return None

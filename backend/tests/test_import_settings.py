@@ -147,3 +147,82 @@ def test_directory_tick_respects_interval(client_db):
         # Interval elapsed (default 15 min): runs again.
         poll_directory_tick(db, now=1000.0 + 15 * 60)
         assert mock_poll.call_count == 2
+
+
+def _upload(client, token, data: bytes = PNG):
+    return client.post(
+        "/import/upload",
+        files={"file": ("bill.png", data, "image/png")},
+        headers=auth(token),
+    )
+
+
+def test_ollama_overrides_and_status(client_db):
+    client, db = client_db
+    token = register_and_login(client, "cfg5@test.com")
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://env-ollama:11434"),
+        patch.object(settings, "ollama_model", "env-model"),
+        patch(
+            "app.services.ollama.list_models", return_value=["env-model", "db-model"]
+        ),
+    ):
+        status = client.get("/import/status", headers=auth(token)).json()
+        assert status["ollama_base_url"] == "http://env-ollama:11434"
+        assert status["ollama_model"] == "env-model"
+        assert status["available_models"] == ["env-model", "db-model"]
+
+        r = client.patch(
+            "/import/settings",
+            json={
+                "ollama_base_url": "http://db-ollama:11434/",
+                "ollama_model": "db-model",
+            },
+            headers=auth(token),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ollama_base_url"] == "http://db-ollama:11434"  # slash stripped
+        assert body["ollama_model"] == "db-model"
+        assert body["model_available"] is True
+
+        r = client.patch(
+            "/import/settings",
+            json={"ollama_base_url": "ftp://nope"},
+            headers=auth(token),
+        )
+        assert r.status_code == 422
+
+        r = client.patch(
+            "/import/settings", json={"ollama_model": "  "}, headers=auth(token)
+        )
+        assert r.status_code == 422
+
+
+def test_extraction_uses_db_ollama_config(client_db):
+    client, db = client_db
+    token = register_and_login(client, "cfg6@test.com")
+
+    with patch.object(settings, "ollama_base_url", None):
+        app_settings.set_value(
+            db, app_settings.OLLAMA_BASE_URL_KEY, "http://db-ollama:11434"
+        )
+        app_settings.set_value(db, app_settings.OLLAMA_MODEL_KEY, "db-model")
+        with patch(
+            "app.services.bill_extract.generate_json", return_value=EXTRACTED
+        ) as mock_generate:
+            r = _upload(client, token)
+            assert r.status_code == 201, r.text
+            config = mock_generate.call_args.kwargs["config"]
+            assert config.base_url == "http://db-ollama:11434"
+            assert config.model == "db-model"
+
+
+def test_upload_blocked_without_ollama_config(client_db):
+    client, db = client_db
+    token = register_and_login(client, "cfg7@test.com")
+    with patch.object(settings, "ollama_base_url", None):
+        r = _upload(client, token)
+    assert r.status_code == 503
+    assert "Settings" in r.json()["detail"]

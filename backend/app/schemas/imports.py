@@ -49,13 +49,17 @@ class ImportSettingsIn(BaseModel):
     enabled: bool | None = None
     directory: str | None = Field(None, max_length=255)
     poll_minutes: int | None = Field(None, ge=1, le=1440)
+    ollama_base_url: str | None = Field(None, max_length=255)
+    ollama_model: str | None = Field(None, max_length=255)
 
 
 class ImportStatusOut(BaseModel):
     ollama_configured: bool
+    ollama_base_url: str | None
     ollama_reachable: bool
     ollama_model: str
     model_available: bool | None
+    available_models: list[str] = []
     import_enabled: bool
     import_dir: str
     import_poll_minutes: int

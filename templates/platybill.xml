@@ -53,4 +53,9 @@ Updates: images are rolling builds from the main branch; the footer of the UI sh
   <Config Name="SMTP_USER" Target="SMTP_USER" Default="" Mode="" Description="SMTP username." Type="Variable" Display="advanced" Required="false" Mask=""></Config>
   <Config Name="SMTP_PASSWORD" Target="SMTP_PASSWORD" Default="" Mode="" Description="SMTP password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="REMINDER_FROM" Target="REMINDER_FROM" Default="" Mode="" Description="From address used for reminder emails, e.g. noreply@example.com." Type="Variable" Display="advanced" Required="false" Mask=""></Config>
+  <Config Name="IMPORT_ENABLED" Target="IMPORT_ENABLED" Default="false" Mode="" Description="Enable automatic bill import from the watch folder. Can also be toggled in Settings." Type="Variable" Display="advanced" Required="false" Mask="">false</Config>
+  <Config Name="OLLAMA_BASE_URL" Target="OLLAMA_BASE_URL" Default="" Mode="" Description="Local Ollama server for bill extraction, e.g. http://10.112.200.20:11434. Editable in Settings; leave empty to configure there." Type="Variable" Display="advanced" Required="false" Mask=""></Config>
+  <Config Name="OLLAMA_MODEL" Target="OLLAMA_MODEL" Default="numind/nuextract3" Mode="" Description="Ollama model used for document extraction. Editable in Settings." Type="Variable" Display="advanced" Required="false" Mask="">numind/nuextract3</Config>
+  <Config Name="IMPORT_DIR" Target="IMPORT_DIR" Default="/data/import" Mode="" Description="Folder polled for bill files (must be inside the data volume). Editable in Settings." Type="Variable" Display="advanced" Required="false" Mask="">/data/import</Config>
+  <Config Name="IMPORT_POLL_MINUTES" Target="IMPORT_POLL_MINUTES" Default="15" Mode="" Description="Minutes between folder scans. Editable in Settings." Type="Variable" Display="advanced" Required="false" Mask="">15</Config>
 </Container>

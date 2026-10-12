@@ -22,9 +22,11 @@ export interface ImportDraftOut {
 
 export interface ImportStatusOut {
   ollama_configured: boolean;
+  ollama_base_url: string | null;
   ollama_reachable: boolean;
   ollama_model: string;
   model_available: boolean | null;
+  available_models: string[];
   import_enabled: boolean;
   import_dir: string;
   import_poll_minutes: number;
@@ -60,6 +62,8 @@ export function updateImportSettings(data: {
   enabled?: boolean;
   directory?: string;
   poll_minutes?: number;
+  ollama_base_url?: string;
+  ollama_model?: string;
 }): Promise<ImportStatusOut> {
   return apiFetch<ImportStatusOut>("/import/settings", {
     method: "PATCH",

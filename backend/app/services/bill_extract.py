@@ -17,8 +17,12 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.core.config import settings
-from app.services.ollama import OllamaError, OllamaUnavailable, generate_json
+from app.services.ollama import (
+    OllamaConfig,
+    OllamaError,
+    OllamaUnavailable,
+    generate_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,19 +165,20 @@ def render_pdf_png(data: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def extract_from_text(text: str) -> ExtractedBill:
+def extract_from_text(text: str, *, config: OllamaConfig) -> ExtractedBill:
     payload = generate_json(
-        model=settings.ollama_text_model,
+        config=config,
+        model=config.text_model,
         prompt=f"{_INSTRUCTIONS}\n\nDocument text:\n---\n{text}\n---",
         schema=EXTRACTION_SCHEMA,
     )
     return _parse(payload, raw_text=text)
 
 
-def extract_from_image(image: bytes) -> ExtractedBill:
+def extract_from_image(image: bytes, *, config: OllamaConfig) -> ExtractedBill:
     encoded = base64.b64encode(image).decode()
     payload = generate_json(
-        model=settings.ollama_model,
+        config=config,
         prompt=_INSTRUCTIONS,
         images=[encoded],
         schema=EXTRACTION_SCHEMA,
@@ -181,22 +186,27 @@ def extract_from_image(image: bytes) -> ExtractedBill:
     return _parse(payload)
 
 
-def _extract_image_two_phase(image: bytes) -> ExtractedBill:
+def _extract_image_two_phase(image: bytes, *, config: OllamaConfig) -> ExtractedBill:
     """OCR with the vision model, then extract with the text model."""
     encoded = base64.b64encode(image).decode()
     ocr = generate_json(
-        model=settings.ollama_ocr_model,
+        config=config,
+        model=config.ocr_model,
         prompt="Extract all text from this document, preserving layout order.",
         images=[encoded],
     )
     text = str(ocr.get("text") or ocr.get("content") or "")
     if not text:
         raise OllamaError("OCR model returned no text")
-    return extract_from_text(text)
+    return extract_from_text(text, config=config)
 
 
 def extract_document(
-    data: bytes, *, content_type: str | None = None, filename: str | None = None
+    data: bytes,
+    *,
+    config: OllamaConfig,
+    content_type: str | None = None,
+    filename: str | None = None,
 ) -> ExtractedBill:
     """Extract from a PDF or image, choosing text vs vision automatically."""
     is_pdf = (content_type == "application/pdf") or (filename or "").lower().endswith(
@@ -205,15 +215,15 @@ def extract_document(
     if is_pdf:
         text = pdf_text(data)
         if len(text) >= 40:
-            return extract_from_text(text)
+            return extract_from_text(text, config=config)
         image = render_pdf_png(data)
     else:
         image = data
 
     try:
-        return extract_from_image(image)
+        return extract_from_image(image, config=config)
     except OllamaUnavailable:
         raise
     except OllamaError as exc:
         logger.info("Primary vision parse failed (%s); trying two-phase", exc)
-        return _extract_image_two_phase(image)
+        return _extract_image_two_phase(image, config=config)
