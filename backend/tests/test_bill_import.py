@@ -119,9 +119,15 @@ def test_confirm_applies_to_variable_queue(client_db):
     bill = _create_bill(client, token)
     sync_payments(client, token)
 
+    today = date.today()
+    document = {
+        **EXTRACTED,
+        "period": today.strftime("%Y-%m"),
+        "due_date": today.replace(day=20).isoformat(),
+    }
     with (
         patch.object(settings, "ollama_base_url", "http://ollama.test"),
-        patch("app.services.bill_extract.generate_json", return_value=EXTRACTED),
+        patch("app.services.bill_extract.generate_json", return_value=document),
     ):
         draft = _upload(client, token).json()
 
@@ -162,7 +168,8 @@ def test_confirm_creates_instance_when_missing(client_db):
     assert result["created_instance"] is True
 
     instance = db.get(PaymentInstance, result["instance_id"])
-    assert instance.period == "2026-10"
+    # Period follows the due date (November), not the extracted billing period.
+    assert instance.period == "2026-11"
     assert instance.due_date == date(2026, 11, 12)
     assert instance.amount == Decimal("87.30")
     assert instance.amount_estimated is False
@@ -353,36 +360,41 @@ def test_status_and_test_ollama(client_db):
 
 
 def test_confirm_variable_other_period_does_not_overwrite_confirmed(client_db):
-    """A draft for a later period must not rewrite an already-confirmed month."""
+    """A draft for a later month must not rewrite an already-confirmed month."""
     client, db = client_db
     token = register_and_login(client, "imp14@test.com")
     bill = _create_bill(client, token)
     sync_payments(client, token)
 
-    # Confirm the current period's estimate first (draft 1).
+    today = date.today()
+    current_doc = {
+        **EXTRACTED,
+        "period": today.strftime("%Y-%m"),
+        "due_date": today.replace(day=20).isoformat(),
+    }
     with (
         patch.object(settings, "ollama_base_url", "http://ollama.test"),
-        patch("app.services.bill_extract.generate_json", return_value=EXTRACTED),
+        patch("app.services.bill_extract.generate_json", return_value=current_doc),
     ):
         draft_one = _upload(client, token).json()
     client.post(
         f"/import/drafts/{draft_one['id']}/confirm", json={}, headers=auth(token)
     )
-    october = (
+    current = (
         db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill["id"]).one()
     )
-    assert october.amount == Decimal("87.30")
+    assert current.amount == Decimal("87.30")
 
-    # A December draft must create its own instance, not touch October's.
-    december = {
+    first_next = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+    later_doc = {
         **EXTRACTED,
         "amount": 91.10,
-        "due_date": "2026-12-12",
-        "period": "2026-11",
+        "period": "2026-08",  # deliberately disagreeing billing period
+        "due_date": first_next.replace(day=12).isoformat(),
     }
     with (
         patch.object(settings, "ollama_base_url", "http://ollama.test"),
-        patch("app.services.bill_extract.generate_json", return_value=december),
+        patch("app.services.bill_extract.generate_json", return_value=later_doc),
     ):
         draft_two = _upload(client, token, data=PNG + b"second").json()
 
@@ -390,8 +402,7 @@ def test_confirm_variable_other_period_does_not_overwrite_confirmed(client_db):
         f"/import/drafts/{draft_two['id']}/confirm", json={}, headers=auth(token)
     )
     assert r.status_code == 200, r.text
-    result = r.json()
-    assert result["created_instance"] is True
+    assert r.json()["created_instance"] is True
 
     instances = (
         db.query(PaymentInstance)
@@ -400,8 +411,8 @@ def test_confirm_variable_other_period_does_not_overwrite_confirmed(client_db):
         .all()
     )
     assert len(instances) == 2
-    assert instances[0].amount == Decimal("87.30")  # October untouched
-    assert instances[1].period == "2026-11"
+    assert instances[0].amount == Decimal("87.30")  # current month untouched
+    assert instances[1].period == first_next.strftime("%Y-%m")
     assert instances[1].amount == Decimal("91.10")
 
 
@@ -544,3 +555,34 @@ def test_sync_keeps_single_instance_after_estimate_confirm(client_db):
     assert len(rows) == 1
     assert rows[0].amount == Decimal("87.30")
     assert rows[0].amount_estimated is False
+
+
+def test_confirm_period_follows_the_due_date(client_db):
+    """The document's billing period may disagree with the due date; the
+    instance's period must match the due date like every other instance."""
+    client, db = client_db
+    token = register_and_login(client, "imp19@test.com")
+    bill = _create_bill(client, token)
+
+    today = date.today()
+    first_next = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+    document = {
+        **EXTRACTED,
+        "period": "2026-08",  # billing period read off the document
+        "due_date": first_next.replace(day=15).isoformat(),
+    }
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=document),
+    ):
+        draft = _upload(client, token).json()
+    r = client.post(
+        f"/import/drafts/{draft['id']}/confirm", json={}, headers=auth(token)
+    )
+    assert r.status_code == 200, r.text
+
+    instance = (
+        db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill["id"]).one()
+    )
+    assert instance.period == first_next.strftime("%Y-%m")
+    assert instance.due_date == first_next.replace(day=15)
