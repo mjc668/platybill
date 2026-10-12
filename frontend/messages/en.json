@@ -108,6 +108,7 @@
         "testFailed": "Could not reach the model server."
     },
     "BillsPage": {
+        "importBill": "Import bill",
         "viewDue": "Next due",
         "viewCategory": "By category",
         "title": "Your Bills",
@@ -287,7 +288,8 @@
         "loadFailed": "Could not load review items."
     },
     "PaymentsPage": {
-        "importBill": "Import bill",
+        "reviewLink": "{count, plural, one {# bill is waiting for review} other {# bills are waiting for review}}",
+        "reviewLinkAction": "Review on Bills",
         "title": "Payments",
         "subtitle": "Track and mark your bills month by month.",
         "loadError": "Failed to load payments.",

@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarClock,
   CalendarPlus,
   ChevronRight,
   ChevronsUpDown,
   FolderTree,
+  Loader2,
   Plus,
   Search,
+  Upload,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import {
   fetchBills,
@@ -27,6 +30,8 @@ import { categoryColor, categoryValue, sortCategories } from "@/lib/categories";
 import { fetchMe, type UserProfile } from "@/lib/user-api";
 import { SessionExpiredError } from "@/lib/api";
 import BillTemplateForm from "@/components/bills/BillTemplateForm";
+import ReviewInbox from "@/components/payments/ReviewInbox";
+import { uploadBill } from "@/lib/imports-api";
 import BillTemplateRow from "@/components/bills/BillTemplateRow";
 import ArchiveConfirmDialog from "@/components/bills/ArchiveConfirmDialog";
 import RestoreDeletedDialog from "@/components/bills/RestoreDeletedDialog";
@@ -67,6 +72,11 @@ export default function BillsPage() {
   const [stateFilter, setStateFilter] = useState<BillStateFilter>("all");
   const [searchFilter, setSearchFilter] = useState("");
   const [view, setView] = useState<"due" | "category">("due");
+  const [importRefresh, setImportRefresh] = useState(0);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   const sortedCategories = sortCategories(categories, locale, tRoot);
   const activeCategories = sortCategories(
@@ -113,6 +123,22 @@ export default function BillsPage() {
       setView(stored);
     }
   }, []);
+
+  async function handleImportUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      await uploadBill(file);
+      setImportRefresh((token) => token + 1);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : t("importFailed"));
+    } finally {
+      setImportBusy(false);
+    }
+  }
 
   function changeView(next: "due" | "category") {
     setView(next);
@@ -268,6 +294,18 @@ export default function BillsPage() {
         />
       )}
 
+      <ReviewInbox
+        refreshToken={importRefresh}
+        onApplied={() => setRefreshKey((key) => key + 1)}
+        onJumpToMonth={(month) => router.push(`/dashboard/payments?month=${month}`)}
+      />
+
+      {importError && (
+        <p className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {importError}
+        </p>
+      )}
+
       {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100">
@@ -292,6 +330,25 @@ export default function BillsPage() {
               <CalendarPlus size={16} />
               {t("generatePayments")}
             </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importBusy}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+            >
+              {importBusy ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Upload size={16} />
+              )}
+              {t("importBill")}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf,image/png,image/jpeg"
+              className="hidden"
+              onChange={handleImportUpload}
+            />
           </div>
           <div className="flex items-center gap-2">
             {view === "category" && activeCategories.length > 1 && (
