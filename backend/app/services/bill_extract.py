@@ -22,6 +22,7 @@ from app.services.ollama import (
     OllamaError,
     OllamaUnavailable,
     generate_json,
+    generate_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -262,14 +263,13 @@ def extract_from_image(image: bytes, *, config: OllamaConfig) -> ExtractedBill:
 def _extract_image_two_phase(image: bytes, *, config: OllamaConfig) -> ExtractedBill:
     """OCR with the vision model, then extract with the text model."""
     encoded = base64.b64encode(image).decode()
-    ocr = generate_json(
+    text = generate_text(
         config=config,
         model=config.ocr_model,
         prompt="Extract all text from this document, preserving layout order.",
         images=[encoded],
     )
-    text = str(ocr.get("text") or ocr.get("content") or "")
-    if not text:
+    if not text.strip():
         raise OllamaError("OCR model returned no text")
     return extract_from_text(text, config=config)
 

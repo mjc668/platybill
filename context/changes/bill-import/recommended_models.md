@@ -20,16 +20,22 @@
 
 ## Benchmark (three synthetic utility bills, through the app)
 
-| Model | Score | Warm speed | Notes |
-| --- | --- | --- | --- |
-| `gemma4` | 9/9 | ~0.5s | current default; currency not read |
-| `qwen3-vl:8b` | 9/9 | ~0.9s | flagship VLM; needs the `thinking`-field fallback (handled in `ollama.generate_json`) |
-| `granite3.2-vision:2b` | 9/9 | ~6s | 2.4 GB document specialist — the pick for low-VRAM hosts |
-| `numind/nuextract3:q4_k_m` | 8/9 | ~3s | fast, reads currency; missed a due date once. Template prompt supported natively |
-| `minicpm-v` | 7/9 | ~4s | dropped a decimal (`87.30` → `8730`). Not recommended |
+| Model | Score | Speed | Size | Notes |
+| --- | --- | --- | --- | --- |
+| `gemma4` | 9/9 | ~0.5s warm | 7.5B | current default |
+| `qwen3-vl:8b` | 9/9 | ~0.9s | 8B | needs the `thinking`-field fallback (handled) |
+| `granite3.2-vision:2b` | 9/9 | ~6s | 2.4 GB | document specialist |
+| `maternion/LightOnOCR-2:1b` (two-phase) | 9/9 | ~1.4–3.2s | 1.5 GB | OCR → `gemma4` for JSON; tiny and fast |
+| `deepseek-ocr:3b` (two-phase) | 9/9 | ~15s | 6.7 GB | accurate but heavy |
+| `numind/nuextract3:q4_k_m` | 8/9 | ~3s | 3.4 GB | fast, reads currency; one date miss |
+| `qwen3-vl:4b` | 8/9 | ~1.0s | 3.3 GB | missed a due date |
+| `minicpm-v` | 7/9 | ~4s | 5.5 GB | dropped a decimal — avoid |
 
-All imports are confirm-first, so a misread is caught in review. Defaults stay
-`gemma4`; `qwen3-vl:8b` and `granite3.2-vision:2b` are equally accurate picks.
+Two-phase models use `generate_text` for the OCR step (they return plain
+text, not JSON) and `OLLAMA_TEXT_MODEL` for the extraction step. All imports
+are confirm-first, so a misread is caught in review. Defaults stay `gemma4`;
+`LightOnOCR-2:1b` is the pick for low-VRAM hosts, `qwen3-vl:8b` for a modern
+general VLM.
 
 ## Extraction settings
 

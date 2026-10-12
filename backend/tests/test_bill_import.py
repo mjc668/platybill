@@ -677,3 +677,28 @@ def test_thinking_field_fallback(monkeypatch):
     )
     result = generate_json(config=config, prompt="p")
     assert result["provider"] == "X"
+
+
+def test_two_phase_uses_text_ocr_then_extracts():
+    from app.services.bill_extract import _extract_image_two_phase
+    from app.services.ollama import OllamaConfig
+
+    config = OllamaConfig(
+        base_url="http://ollama.test",
+        model="gemma4",
+        ocr_model="deepseek-ocr:3b",
+        text_model="gemma4",
+        timeout=60,
+    )
+    with (
+        patch(
+            "app.services.bill_extract.generate_text", return_value="BILL 87.30"
+        ) as mock_text,
+        patch(
+            "app.services.bill_extract.generate_json", return_value=EXTRACTED
+        ) as mock_json,
+    ):
+        result = _extract_image_two_phase(PNG, config=config)
+        assert mock_text.call_args.kwargs["model"] == "deepseek-ocr:3b"
+        assert mock_json.call_args.kwargs["model"] == "gemma4"
+        assert result.amount == Decimal("87.30")

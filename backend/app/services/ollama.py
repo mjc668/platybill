@@ -92,6 +92,46 @@ def generate_json(
     return parsed
 
 
+def generate_text(
+    *,
+    config: OllamaConfig,
+    prompt: str,
+    model: str | None = None,
+    images: list[str] | None = None,
+    timeout: float | None = None,
+) -> str:
+    """Single generation returning raw text (OCR models do not emit JSON)."""
+    payload: dict[str, Any] = {
+        "model": model or config.model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0},
+    }
+    if images:
+        payload["images"] = images
+
+    try:
+        response = httpx.post(
+            f"{config.base_url}/api/generate",
+            json=payload,
+            timeout=timeout if timeout is not None else config.timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise OllamaUnavailable(f"Ollama request failed: {exc}") from exc
+    if response.status_code != 200:
+        raise OllamaBadResponse(
+            f"Ollama HTTP {response.status_code}: {response.text[:200]}"
+        )
+    try:
+        body = response.json()
+        text = body.get("response") or body.get("thinking") or ""
+    except (ValueError, TypeError) as exc:
+        raise OllamaBadResponse("Ollama returned no response field") from exc
+    if not str(text).strip():
+        raise OllamaBadResponse("Ollama returned an empty response")
+    return str(text)
+
+
 def list_models(*, base_url: str, timeout: float = 5.0) -> list[str]:
     """Names of locally available models; raises OllamaUnavailable on failure."""
     try:
