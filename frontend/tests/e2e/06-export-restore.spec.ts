@@ -6,7 +6,7 @@
  * the RestoreButton UI to test the real upload-confirm flow.
  */
 import { test, expect } from '@playwright/test';
-import { loginNewUser, createBillViaApi, syncPaymentsViaApi } from './helpers';
+import { loginNewUser, createBillViaApi, syncPaymentsViaApi, openSettingsTab } from './helpers';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -32,7 +32,7 @@ test('restore from backup preserves bill count', async ({ page }) => {
   fs.writeFileSync(tmpFile, JSON.stringify(backup));
 
   // Step: navigate to settings where RestoreButton lives
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Data');
   await expect(page.getByRole('button', { name: 'Restore from backup' })).toBeVisible();
 
   // Step: click restore button — triggers hidden file input
@@ -50,7 +50,7 @@ test('restore from backup preserves bill count', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Replace My Data' }).click();
 
   // RestoreButton reloads the page on success — wait for navigation
-  await page.waitForURL('**/settings');
+  await page.waitForURL((url) => url.pathname.endsWith('/settings'));
 
   // Step: re-export to verify count matches
   const afterRes = await page.request.get(`${apiUrl}/export/json`);
@@ -90,7 +90,7 @@ test('restoring a backup with fewer bills/payments than current shows the stale-
   await createBillViaApi(page, `E2E Newer ${Date.now()}`);
   await syncPaymentsViaApi(page);
 
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Data');
   const [fileChooser] = await Promise.all([
     page.waitForEvent('filechooser'),
     page.getByRole('button', { name: 'Restore from backup' }).click(),
@@ -120,7 +120,7 @@ test('picking a malformed backup file shows an inline error, not the comparison/
   const tmpFile = path.join(os.tmpdir(), `platybill-backup-malformed-${Date.now()}.json`);
   fs.writeFileSync(tmpFile, 'this is not valid JSON {{{');
 
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Data');
   const [fileChooser] = await Promise.all([
     page.waitForEvent('filechooser'),
     page.getByRole('button', { name: 'Restore from backup' }).click(),

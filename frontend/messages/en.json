@@ -451,8 +451,12 @@
             "description": "Upload or ingest bills from a folder or mailbox and extract the amount with your local model. Every import is reviewed before it is applied."
         },
         "pageTitle": "Settings",
-        "collapseAll": "Collapse all",
-        "expandAll": "Expand all",
+        "tabs": {
+            "account": "Account",
+            "notifications": "Notifications",
+            "bills": "Bills",
+            "data": "Data"
+        },
         "unsavedTitle": "Unsaved changes",
         "unsavedDescription": "You have unsaved changes. Leave without saving?",
         "unsavedLeave": "Leave",

@@ -2,14 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  HardDriveDownload,
-  HardDriveUpload,
-  ChevronsUpDown,
-} from "lucide-react";
+import { HardDriveDownload, HardDriveUpload } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { fetchMe, UserProfile } from "@/lib/user-api";
-import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
 import BackupButton from "@/components/BackupButton";
 import RestoreButton from "@/components/RestoreButton";
 import SnapshotRecoverySection from "@/components/SnapshotRecoverySection";
@@ -21,6 +16,9 @@ import { CategoriesTile } from "@/components/settings/CategoriesTile";
 import { BillImportTile } from "@/components/settings/BillImportTile";
 import { UnsavedChangesDialog } from "@/components/settings/UnsavedChangesDialog";
 
+const TABS = ["account", "notifications", "bills", "data"] as const;
+type TabId = (typeof TABS)[number];
+
 export default function SettingsPage() {
   const t = useTranslations("SettingsPage");
   const router = useRouter();
@@ -29,11 +27,7 @@ export default function SettingsPage() {
   const [profileDirty, setProfileDirty] = useState(false);
   const [emailDirty, setEmailDirty] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
-
-  const TILE_KEYS = ["profile", "email-notifications", "browser-notifications", "categories", "backup", "restore"] as const;
-
-  const { collapsed, toggle, collapseAll, expandAll, allCollapsed } =
-    useCollapsedCategories("settings-collapsed-tiles", TILE_KEYS);
+  const [activeTab, setActiveTab] = useState<TabId>("account");
 
   const isDirtyAny = profileDirty || emailDirty;
 
@@ -43,6 +37,25 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchMe().then(setProfile).catch(() => {});
   }, []);
+
+  // The active tab mirrors the URL hash so refreshes and deep links
+  // (e.g. the e2e suite) land on the right section.
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if ((TABS as readonly string[]).includes(hash)) {
+        setActiveTab(hash as TabId);
+      }
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
+
+  function selectTab(tab: TabId) {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", `#${tab}`);
+  }
 
   // Browser tab close / refresh guard
   const handleBeforeUnload = useCallback(
@@ -95,79 +108,106 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100">
-          {t("pageTitle")}
-        </h1>
-        <button
-          onClick={allCollapsed ? expandAll : collapseAll}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
-        >
-          <ChevronsUpDown size={13} />
-          {allCollapsed ? t("expandAll") : t("collapseAll")}
-        </button>
+      <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100">
+        {t("pageTitle")}
+      </h1>
+
+      <div
+        role="tablist"
+        aria-label={t("pageTitle")}
+        className="flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-700"
+      >
+        {TABS.map((tab) => (
+          <button
+            key={tab}
+            role="tab"
+            id={`settings-tab-${tab}`}
+            aria-selected={activeTab === tab}
+            aria-controls={`settings-panel-${tab}`}
+            onClick={() => selectTab(tab)}
+            className={`-mb-px shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === tab
+                ? "border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400"
+                : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
+            }`}
+          >
+            {t(`tabs.${tab}`)}
+          </button>
+        ))}
       </div>
 
-      <ProfileTile
-        profile={profile}
-        onProfileUpdate={setProfile}
-        onDirtyChange={onProfileDirty}
-        t={t}
-        isCollapsed={collapsed.has("profile")}
-        onToggle={() => toggle("profile")}
-      />
-
-      <EmailNotificationsTile
-        profile={profile}
-        onProfileUpdate={setProfile}
-        onDirtyChange={onEmailDirty}
-        t={t}
-        isCollapsed={collapsed.has("email-notifications")}
-        onToggle={() => toggle("email-notifications")}
-      />
-
-      <BrowserNotificationsTile
-        t={t}
-        isCollapsed={collapsed.has("browser-notifications")}
-        onToggle={() => toggle("browser-notifications")}
-      />
-
-      <CategoriesTile
-        t={t}
-        isCollapsed={collapsed.has("categories")}
-        onToggle={() => toggle("categories")}
-      />
-
-      <BillImportTile
-        t={t}
-        isCollapsed={collapsed.has("bill-import")}
-        onToggle={() => toggle("bill-import")}
-      />
-
-      <Tile
-        color="blue"
-        icon={HardDriveDownload}
-        title={t("backup.title")}
-        description={t("backup.description")}
-        t={t}
-        isCollapsed={collapsed.has("backup")}
-        onToggle={() => toggle("backup")}
+      <div
+        role="tabpanel"
+        id="settings-panel-account"
+        aria-labelledby="settings-tab-account"
+        hidden={activeTab !== "account"}
+        className="space-y-4"
       >
-        <BackupButton label="Backup" />
-      </Tile>
+        <ProfileTile
+          profile={profile}
+          onProfileUpdate={setProfile}
+          onDirtyChange={onProfileDirty}
+          t={t}
+        />
+      </div>
 
-      <Tile
-        color="red"
-        icon={HardDriveUpload}
-        title={t("restore.title")}
-        description={t("restore.description")}
-        t={t}
-        isCollapsed={collapsed.has("restore")}
-        onToggle={() => toggle("restore")}
+      <div
+        role="tabpanel"
+        id="settings-panel-notifications"
+        aria-labelledby="settings-tab-notifications"
+        hidden={activeTab !== "notifications"}
+        className="space-y-4"
       >
-        <RestoreButton label="Restore" />
-        <SnapshotRecoverySection />
-      </Tile>
+        <EmailNotificationsTile
+          profile={profile}
+          onProfileUpdate={setProfile}
+          onDirtyChange={onEmailDirty}
+          t={t}
+        />
+
+        <BrowserNotificationsTile t={t} />
+      </div>
+
+      <div
+        role="tabpanel"
+        id="settings-panel-bills"
+        aria-labelledby="settings-tab-bills"
+        hidden={activeTab !== "bills"}
+        className="space-y-4"
+      >
+        <CategoriesTile t={t} />
+
+        <BillImportTile t={t} />
+      </div>
+
+      <div
+        role="tabpanel"
+        id="settings-panel-data"
+        aria-labelledby="settings-tab-data"
+        hidden={activeTab !== "data"}
+        className="space-y-4"
+      >
+        <Tile
+          color="blue"
+          icon={HardDriveDownload}
+          title={t("backup.title")}
+          description={t("backup.description")}
+          t={t}
+        >
+          <BackupButton label="Backup" />
+        </Tile>
+
+        <Tile
+          color="red"
+          icon={HardDriveUpload}
+          title={t("restore.title")}
+          description={t("restore.description")}
+          t={t}
+        >
+          <RestoreButton label="Restore" />
+          <SnapshotRecoverySection />
+        </Tile>
+      </div>
 
       {pendingHref && (
         <UnsavedChangesDialog

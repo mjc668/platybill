@@ -7,7 +7,7 @@
  *                  POST /bills, GET /bills, client-side grouping and pickers.
  */
 import { test, expect } from '@playwright/test';
-import { loginNewUser } from './helpers';
+import { loginNewUser, openSettingsTab } from './helpers';
 
 test('custom category can be created, used, renamed, archived, and deleted', async ({
   page,
@@ -21,7 +21,7 @@ test('custom category can be created, used, renamed, archived, and deleted', asy
   await loginNewUser(page);
 
   // Setup: create a custom category in Settings
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Bills');
   const categoriesTile = page.getByTestId('categories-tile');
   await expect(categoriesTile).toBeVisible();
   await categoriesTile.getByLabel('New category').fill(customName);
@@ -44,7 +44,7 @@ test('custom category can be created, used, renamed, archived, and deleted', asy
   ).toBeVisible();
 
   // Step: rename the category in Settings
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Bills');
   await expect(categoriesTile).toBeVisible();
   const row = categoriesTile.getByRole('listitem').filter({ hasText: customName });
   await expect(row).toBeVisible();
@@ -63,7 +63,7 @@ test('custom category can be created, used, renamed, archived, and deleted', asy
   await expect(page.getByText(customName, { exact: true })).toHaveCount(0);
 
   // Step: deleting an in-use category is refused with the server message
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Bills');
   await expect(categoriesTile).toBeVisible();
   const renamedRow = categoriesTile
     .getByRole('listitem')
@@ -84,7 +84,7 @@ test('custom category can be created, used, renamed, archived, and deleted', asy
   await expect(picker.getByRole('option', { name: renamedName })).toHaveCount(0);
 
   // Step: create an unused category and delete it
-  await page.goto('/dashboard/settings');
+  await openSettingsTab(page, 'Bills');
   await expect(categoriesTile).toBeVisible();
   await categoriesTile.getByLabel('New category').fill(unusedName);
   await categoriesTile.getByRole('button', { name: 'Add', exact: true }).click();

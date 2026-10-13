@@ -52,6 +52,18 @@ export async function loginNewUser(page: Page): Promise<{ email: string; passwor
   return { email, password };
 }
 
+export type SettingsTab = 'Account' | 'Notifications' | 'Bills' | 'Data';
+
+/**
+ * Opens the Settings page on the given tab. Sections below Account live in
+ * client-side tabs (hash-synced), so tests must activate the target tab
+ * before interacting with its content.
+ */
+export async function openSettingsTab(page: Page, tab: SettingsTab): Promise<void> {
+  await page.goto(`/dashboard/settings#${tab.toLowerCase()}`);
+  await page.getByRole('tab', { name: tab, exact: true }).click();
+}
+
 export interface BillOverrides {
   category?: string;
   frequency?: string;
