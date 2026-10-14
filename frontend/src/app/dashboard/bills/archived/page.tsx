@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, ArchiveRestore, ChevronRight, ChevronsUpDown, Loader2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronRight, ChevronsUpDown, Loader2, Trash2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  deleteBill,
   fetchBills,
   normalizeBillFrequency,
   unarchiveBill,
@@ -13,6 +14,7 @@ import { fetchCategories, categoryLabel, type Category } from "@/lib/categories-
 import { sortCategories } from "@/lib/categories";
 import { SessionExpiredError } from "@/lib/api";
 import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
+import DeleteBillDialog from "@/components/bills/DeleteBillDialog";
 
 export default function ArchivedBillsPage() {
   const t = useTranslations("ArchivedBillsPage");
@@ -28,6 +30,33 @@ export default function ArchivedBillsPage() {
     id: number;
     message: string;
   } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<BillTemplateOut | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<{
+    id: number;
+    message: string;
+  } | null>(null);
+
+  async function handleDeleteConfirm() {
+    if (!deleteTarget || deleting) return;
+    const id = deleteTarget.id;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteBill(id);
+      setTemplates((prev) => prev.filter((tmpl) => tmpl.id !== id));
+      setDeleteTarget(null);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) return;
+      setDeleteTarget(null);
+      setDeleteError({
+        id,
+        message: err instanceof Error ? err.message : t("deleteFailed"),
+      });
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function handleUnarchive(id: number) {
     if (unarchivingId !== null) return;
@@ -165,6 +194,7 @@ export default function ArchivedBillsPage() {
                   {group.map((tmpl) => (
                     <div
                       key={tmpl.id}
+                      data-testid={`archived-bill-${tmpl.id}`}
                       className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 opacity-70 dark:bg-slate-800 dark:border-slate-700"
                     >
                       <div className="flex flex-1 flex-col min-w-0 gap-0.5">
@@ -192,6 +222,11 @@ export default function ArchivedBillsPage() {
                             {unarchiveError.message}
                           </p>
                         )}
+                        {deleteError?.id === tmpl.id && (
+                          <p className="text-xs text-red-600 dark:text-red-400">
+                            {deleteError.message}
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
@@ -210,6 +245,15 @@ export default function ArchivedBillsPage() {
                           )}
                           <span className="hidden sm:inline">{t("unarchive")}</span>
                         </button>
+                        <button
+                          onClick={() => setDeleteTarget(tmpl)}
+                          disabled={deleting}
+                          aria-label={t("delete")}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-500 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-red-700 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                        >
+                          <Trash2 size={15} />
+                          <span className="hidden sm:inline">{t("delete")}</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -218,6 +262,15 @@ export default function ArchivedBillsPage() {
             );
           })}
         </div>
+      )}
+
+      {deleteTarget && (
+        <DeleteBillDialog
+          billName={deleteTarget.name}
+          deleting={deleting}
+          onConfirm={() => void handleDeleteConfirm()}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

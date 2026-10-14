@@ -69,7 +69,17 @@ class BillTemplate(Base):
     )  # day-of-month for monthly/annual bills
     notes: Mapped[str | None] = mapped_column(Text)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When the bill was archived (UTC). On unarchive, occurrences whose due
+    # date fell inside the archived span are cancelled. NULL for bills
+    # archived before this column existed (no cancellation).
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Soft delete: the row (and its history) stays in the database and in
+    # exports, but is hidden from every frontend view. Only archived bills
+    # can be soft-deleted.
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     # Recurrence anchor: YYYY-MM string set at creation from UTC month.
     # Avoids UTC-vs-local off-by-one when created_at straddles a month boundary.
     # NULL for rows created before this column existed; code falls back to created_at.

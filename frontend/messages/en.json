@@ -163,6 +163,8 @@
         "archived": "Archived",
         "unarchive": "Unarchive",
         "unarchiveFailed": "Failed to unarchive bill.",
+        "delete": "Delete",
+        "deleteFailed": "Failed to delete bill.",
         "frequency": {
             "weekly": "Every {count, plural, one {week} other {# weeks}}",
             "monthly": "Every {count, plural, one {month} other {# months}}",
@@ -241,10 +243,17 @@
     },
     "ArchiveConfirmDialog": {
         "title": "Archive “{billName}”?",
-        "description": "This bill will be hidden from the active list. Payment history is preserved and accessible from the archived view.",
+        "description": "This bill will be hidden from the active list and its unpaid due payments pause until you unarchive it — then it resumes from the next due date. Payment history is preserved.",
         "cancel": "Cancel",
         "archive": "Archive",
         "archiving": "Archiving…"
+    },
+    "DeleteBillDialog": {
+        "title": "Delete “{billName}”?",
+        "description": "This removes the bill and hides its payments everywhere in Platybill. The data stays in your database and is kept in backups.",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "deleting": "Deleting…"
     },
     "Frequencies": {
         "weekly": "Every {count, plural, one {week} other {# weeks}}",

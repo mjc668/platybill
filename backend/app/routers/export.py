@@ -62,6 +62,7 @@ def export_xlsx(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == me.id,
+            BillTemplate.is_deleted.is_(False),
             PaymentInstance.period.startswith(f"{year}-"),
             PaymentInstance.is_deleted.is_(False),
         )
@@ -164,6 +165,8 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
                 "notes": t.notes,
                 "is_archived": t.is_archived,
                 "is_paused": t.is_paused,
+                "is_deleted": t.is_deleted,
+                "archived_at": t.archived_at.isoformat() if t.archived_at else None,
                 "start_period": t.start_period,
                 "created_at": t.created_at.isoformat(),
             }
@@ -319,6 +322,10 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
             notes=bt.notes,
             is_archived=bt.is_archived,
             is_paused=bt.is_paused,
+            is_deleted=bt.is_deleted,
+            archived_at=(
+                datetime.fromisoformat(bt.archived_at) if bt.archived_at else None
+            ),
             start_period=bt.start_period,
             user_id=user_id,
         )

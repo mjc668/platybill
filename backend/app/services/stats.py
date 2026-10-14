@@ -60,6 +60,7 @@ def _primary_currency(db: Session, user_id: int) -> tuple[str, list[str]]:
         db.query(BillTemplate.currency, func.count(BillTemplate.id))
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.is_archived.is_(False),
         )
         .group_by(BillTemplate.currency)
@@ -123,6 +124,7 @@ def _summary(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.period == month,
             PaymentInstance.is_deleted.is_(False),
@@ -154,6 +156,7 @@ def _trend(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             paid_period.in_(periods),
@@ -172,6 +175,7 @@ def _trend(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),
@@ -206,6 +210,7 @@ def _forecast(
         db.query(BillTemplate)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.is_archived.is_(False),
             BillTemplate.is_paused.is_(False),
             BillTemplate.currency == currency,
@@ -242,6 +247,7 @@ def _by_category(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             paid_period.in_(periods),
@@ -258,6 +264,7 @@ def _by_category(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),
@@ -310,6 +317,7 @@ def _attention(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),
@@ -363,6 +371,7 @@ def _upcoming_window(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),
@@ -386,6 +395,7 @@ def _paid_window(db: Session, user_id: int, currency: str, today: date) -> PaidW
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             Payment.paid_on >= start,
@@ -399,6 +409,7 @@ def _paid_window(db: Session, user_id: int, currency: str, today: date) -> PaidW
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),
@@ -428,6 +439,7 @@ def _overdue_summary(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.currency == currency,
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(False),

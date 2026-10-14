@@ -212,6 +212,8 @@ class BackupTemplate(BaseModel):
     notes: str | None
     is_archived: bool
     is_paused: bool
+    is_deleted: bool = False
+    archived_at: str | None = None
     start_period: str | None
     created_at: str
 
@@ -219,6 +221,14 @@ class BackupTemplate(BaseModel):
     @classmethod
     def validate_start_period(cls, v: str | None) -> str | None:
         return _validate_optional_period(v)
+
+    @field_validator("archived_at")
+    @classmethod
+    def validate_archived_at(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        _validate_optional_iso_datetime(v)
+        return v
 
     @field_validator("start_date")
     @classmethod

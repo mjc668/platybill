@@ -38,6 +38,7 @@ from app.services.payments import (
 from app.services.recurrence import (
     _due_date_for_period,
     backfill_template_instances,
+    cancel_archived_occurrences,
     confirmed_amounts,
     suggested_amount,
     ensure_current_period_instances,
@@ -50,6 +51,14 @@ from app.services.recurrence import (
 )
 
 router = APIRouter(prefix="/bills", tags=["bills"])
+
+
+def _get_visible_bill(db: Session, bill_id: int, me: User) -> BillTemplate:
+    """Scoped bill lookup returning 404 for missing, foreign or deleted bills."""
+    bill = db.get(BillTemplate, bill_id)
+    if not bill or bill.user_id != me.id or bill.is_deleted:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return bill
 
 
 def _resolve_category(
@@ -132,7 +141,10 @@ def list_bills(
     q = (
         db.query(BillTemplate)
         .options(selectinload(BillTemplate.category))
-        .filter(BillTemplate.user_id == me.id)
+        .filter(
+            BillTemplate.user_id == me.id,
+            BillTemplate.is_deleted.is_(False),
+        )
     )
     if not include_archived:
         q = q.filter(BillTemplate.is_archived.is_(False))
@@ -295,6 +307,15 @@ def list_payments(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == me.id,
+            BillTemplate.is_deleted.is_(False),
+            # Archived bills are quiet: their untouched pending rows stay out
+            # of the list until the bill is unarchived. Rows with payment
+            # events (paid or partially paid) remain visible as history.
+            or_(
+                BillTemplate.is_archived.is_(False),
+                PaymentInstance.status == PaymentStatus.paid,
+                PaymentInstance.payments.any(),
+            ),
             PaymentInstance.is_deleted.is_(False),
             # Estimated variable-bill instances stay out of the normal list
             # until their amount is confirmed (see /payments/needs-confirmation).
@@ -475,6 +496,9 @@ def needs_confirmation(
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
             BillTemplate.user_id == me.id,
+            # Archived and deleted bills are quiet: their estimates never nag.
+            BillTemplate.is_deleted.is_(False),
+            BillTemplate.is_archived.is_(False),
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.amount_estimated.is_(True),
             PaymentInstance.status != PaymentStatus.paid,
@@ -547,6 +571,7 @@ def generate_instances(
             for row in db.query(BillTemplate.id).filter(
                 BillTemplate.id.in_(requested),
                 BillTemplate.user_id == me.id,
+                BillTemplate.is_deleted.is_(False),
             )
         }
         if owned != requested:
@@ -570,15 +595,18 @@ def unarchive_bill(
 ):
     """Restore an archived bill and resume from the next scheduled occurrence.
 
-    Archived/skipped periods are not backfilled; only the first occurrence
-    on/after today is seeded (idempotent on `(bill_id, due_date)` and
-    cap-aware).
+    Occurrences whose due date fell inside the archived span are cancelled
+    (unpaid event-free rows are soft-deleted, missing dates get tombstones);
+    periods before the current month are never backfilled. The schedule then
+    resumes at the first occurrence on/after today (idempotent on
+    `(bill_id, due_date)` and cap-aware).
     """
-    bill = db.get(BillTemplate, bill_id)
-    if not bill or bill.user_id != me.id:
-        raise HTTPException(status_code=404, detail="Bill not found")
+    bill = _get_visible_bill(db, bill_id, me)
     bill.is_archived = False
     bill.is_paused = False
+    if bill.archived_at is not None:
+        cancel_archived_occurrences(db, bill, bill.archived_at, date.today())
+    bill.archived_at = None
     seed_resumed_occurrences(db, bill, date.today())
     db.commit()
     db.refresh(bill)
@@ -591,16 +619,14 @@ def has_deleted_future(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
-    bill = db.get(BillTemplate, bill_id)
-    if not bill or bill.user_id != me.id:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    current_period = date.today().strftime("%Y-%m")
+    bill = _get_visible_bill(db, bill_id, me)
+    today = date.today()
     exists = (
         db.query(PaymentInstance)
         .filter(
             PaymentInstance.bill_id == bill_id,
             PaymentInstance.is_deleted.is_(True),
-            PaymentInstance.period >= current_period,
+            PaymentInstance.due_date >= today,
         )
         .first()
         is not None
@@ -615,9 +641,7 @@ def update_bill(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
-    bill = db.get(BillTemplate, bill_id)
-    if not bill or bill.user_id != me.id:
-        raise HTTPException(status_code=404, detail="Bill not found")
+    bill = _get_visible_bill(db, bill_id, me)
 
     from app.models.bill import BillFrequency as BF
 
@@ -734,13 +758,16 @@ def update_bill(
                     db.delete(inst)
 
     if body.recreate_deleted_future:
-        current_period = date.today().strftime("%Y-%m")
+        today = date.today()
         tombstones = (
             db.query(PaymentInstance)
             .filter(
                 PaymentInstance.bill_id == bill.id,
                 PaymentInstance.is_deleted.is_(True),
-                PaymentInstance.period >= current_period,
+                # "Future payments" means future: a tombstone for a due date
+                # that already passed (e.g. cancelled inside an archived span)
+                # is never resurrected.
+                PaymentInstance.due_date >= today,
             )
             .all()
         )
@@ -771,8 +798,30 @@ def archive_bill(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
-    bill = db.get(BillTemplate, bill_id)
-    if not bill or bill.user_id != me.id:
-        raise HTTPException(status_code=404, detail="Bill not found")
+    bill = _get_visible_bill(db, bill_id, me)
     bill.is_archived = True
+    # Stamped so unarchive can cancel occurrences due inside the archived span.
+    bill.archived_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+@router.delete("/{bill_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bill(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+):
+    """Soft-delete an archived bill.
+
+    The row (and its whole history) stays in the database and in exports, but
+    is hidden from every frontend view. Bills must be archived first so the
+    delete is always a deliberate second step.
+    """
+    bill = _get_visible_bill(db, bill_id, me)
+    if not bill.is_archived:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archive the bill before deleting it",
+        )
+    bill.is_deleted = True
     db.commit()

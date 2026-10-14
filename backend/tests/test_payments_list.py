@@ -207,3 +207,58 @@ def test_window_days_returns_overdue_and_rolling_window(client_db):
     assert str(today - timedelta(days=3)) in due_dates  # recently paid
     assert str(today + timedelta(days=90)) not in due_dates
     assert str(today - timedelta(days=120)) not in due_dates
+
+
+def test_archived_bills_hide_untouched_rows_but_keep_payment_events(client_db):
+    """Archived bills are quiet: pending rows vanish, payment history stays."""
+    from app.models.payment import Payment
+
+    client, db = client_db
+    token = register_and_login(client, "archived_quiet@test.com")
+    today = date.today()
+    month = today.strftime("%Y-%m")
+    bill_id = _create_bill(client, token)
+
+    pending_id = _insert_instance(db, bill_id, period=month, due_date=today)
+    partial_id = _insert_instance(
+        db,
+        bill_id,
+        period=month,
+        due_date=today + timedelta(days=1),
+        paid_amount="40.00",
+    )
+    paid_id = _insert_instance(
+        db,
+        bill_id,
+        period=month,
+        due_date=today + timedelta(days=2),
+        status="paid",
+        paid_amount="100.00",
+    )
+    db.add(Payment(instance_id=partial_id, amount="40.00", paid_on=today))
+    db.commit()
+
+    # While active, all three rows are visible.
+    rows = client.get(f"/bills/payments?month={month}", headers=auth(token)).json()
+    visible = {row["id"] for row in rows if row["bill_id"] == bill_id}
+    assert visible == {pending_id, partial_id, paid_id}
+
+    r = client.post(f"/bills/{bill_id}/archive", headers=auth(token))
+    assert r.status_code == 204
+
+    rows = client.get(f"/bills/payments?month={month}", headers=auth(token)).json()
+    visible = {row["id"] for row in rows if row["bill_id"] == bill_id}
+    # Untouched pending row hidden; rows with payment events remain as history.
+    assert visible == {partial_id, paid_id}
+
+    # The due-soon (rolling window) scope follows the same rule.
+    rows = client.get("/bills/payments?window_days=30", headers=auth(token)).json()
+    visible = {row["id"] for row in rows if row["bill_id"] == bill_id}
+    assert visible == {partial_id, paid_id}
+
+    # Unarchiving makes the pending row visible again.
+    r = client.post(f"/bills/{bill_id}/unarchive", headers=auth(token))
+    assert r.status_code == 200
+    rows = client.get(f"/bills/payments?month={month}", headers=auth(token)).json()
+    visible = {row["id"] for row in rows if row["bill_id"] == bill_id}
+    assert visible == {pending_id, partial_id, paid_id}

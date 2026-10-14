@@ -81,6 +81,7 @@ def match_bill(db: Session, user_id: int, extracted: ExtractedBill) -> int | Non
         .filter(
             BillTemplate.user_id == user_id,
             BillTemplate.is_archived.is_(False),
+            BillTemplate.is_deleted.is_(False),
         )
         .all()
     )
@@ -232,7 +233,7 @@ def confirm_draft(
     if target_bill_id is None:
         raise ValueError("No bill selected for this draft")
     bill = db.get(BillTemplate, target_bill_id)
-    if bill is None or bill.user_id != draft.user_id:
+    if bill is None or bill.user_id != draft.user_id or bill.is_deleted:
         raise ValueError("Bill not found")
     if draft.amount is None or draft.amount <= 0:
         raise ValueError("Draft has no amount to confirm")

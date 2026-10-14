@@ -206,6 +206,7 @@ def send_reminders_for_user(db: Session, user: User) -> int:
         .filter(
             BillTemplate.user_id == user.id,
             BillTemplate.is_archived.is_(False),
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.is_paused.is_(False),
         )
         .all()

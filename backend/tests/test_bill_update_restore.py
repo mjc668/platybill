@@ -159,6 +159,44 @@ def test_patch_restore_flips_tombstone_to_active(client_db):
     assert refreshed.status == PaymentStatus.upcoming
 
 
+def test_has_deleted_future_past_due_current_month_returns_false(client_db):
+    """A tombstone whose due date already passed is not "future"."""
+    client, db = client_db
+    token = register_and_login(client, "u3b@test.com")
+    bill_id = _create_bill(client, token)
+    due = date.today() - timedelta(days=1)
+    _insert_instance(db, bill_id, due.strftime("%Y-%m"), due, is_deleted=True)
+
+    r = client.get(f"/bills/{bill_id}/has-deleted-future", headers=auth(token))
+    assert r.status_code == 200
+    assert r.json() == {"has_deleted_future": False}
+
+
+def test_patch_restore_skips_past_due_tombstone(client_db):
+    """recreate_deleted_future never resurrects a due date that already passed.
+
+    Regression: the old period-based filter restored a current-month tombstone
+    even when its due date was in the past (e.g. cancelled inside an archived
+    span), resurrecting a phantom overdue.
+    """
+    client, db = client_db
+    token = register_and_login(client, "u4b@test.com")
+    bill_id = _create_bill(client, token)
+    due = date.today() - timedelta(days=1)
+    inst = _insert_instance(db, bill_id, due.strftime("%Y-%m"), due, is_deleted=True)
+
+    r = client.patch(
+        f"/bills/{bill_id}",
+        json={"recreate_deleted_future": True},
+        headers=auth(token),
+    )
+    assert r.status_code == 200
+
+    db.expire_all()
+    refreshed = db.get(PaymentInstance, inst.id)
+    assert refreshed.is_deleted is True
+
+
 def test_patch_restore_updates_amount(client_db):
     """Restored instances pick up the template's updated amount."""
     client, db = client_db

@@ -316,6 +316,7 @@ def eligible_for_generation(
     query = db.query(BillTemplate).filter(
         BillTemplate.user_id == user_id,
         BillTemplate.is_archived.is_(False),
+        BillTemplate.is_deleted.is_(False),
         BillTemplate.is_paused.is_(False),
         BillTemplate.frequency != BillFrequency.one_off,
     )
@@ -359,6 +360,7 @@ def ensure_current_period_instances(db: Session, period: str, user_id: int) -> N
         .filter(
             BillTemplate.user_id == user_id,
             BillTemplate.is_archived.is_(False),
+            BillTemplate.is_deleted.is_(False),
             BillTemplate.is_paused.is_(False),
         )
         .all()
@@ -567,17 +569,83 @@ def _reanchor_for_cap(
     return dates[:remaining]
 
 
+def cancel_archived_occurrences(
+    db: Session, template: BillTemplate, archived_at: datetime, today: date
+) -> int:
+    """Cancel occurrences due inside an archived span on unarchive.
+
+    Occurrences whose due date fell in `[archived_at.date(), today)` were due
+    while the bill was inactive, so they are not real. Existing unpaid,
+    event-free rows are soft-deleted; missing dates get tombstone rows so a
+    later sync cannot re-create them. Rows with payment events (paid or
+    partially paid) are never touched. New rows are appended to the session
+    without committing — the caller owns the commit. Returns the number of
+    occurrences cancelled or tombstoned.
+    """
+    start = archived_at.date()
+    if start >= today:
+        return 0
+
+    candidate_due_dates: list[date] = []
+    period = start.strftime("%Y-%m")
+    end_period = today.strftime("%Y-%m")
+    while period <= end_period:
+        candidate_due_dates.extend(
+            due_date
+            for due_date in _occurrences_in_period(template, period)
+            if start <= due_date < today
+        )
+        period = _add_months(period, 1)
+
+    touched = 0
+    for due_date in candidate_due_dates:
+        instance = (
+            db.query(PaymentInstance)
+            .filter(
+                PaymentInstance.bill_id == template.id,
+                PaymentInstance.due_date == due_date,
+            )
+            .first()
+        )
+        if instance is None:
+            db.add(
+                PaymentInstance(
+                    bill_id=template.id,
+                    period=due_date.strftime("%Y-%m"),
+                    due_date=due_date,
+                    amount=template.amount,
+                    status=PaymentStatus.upcoming,
+                    is_deleted=True,
+                )
+            )
+            touched += 1
+            continue
+        if instance.is_deleted or instance.status == PaymentStatus.paid:
+            continue
+        has_events = (
+            db.query(Payment.id).filter(Payment.instance_id == instance.id).first()
+            is not None
+        )
+        if has_events:
+            continue
+        instance.is_deleted = True
+        touched += 1
+
+    return touched
+
+
 def seed_resumed_occurrences(
     db: Session, template: BillTemplate, today: date
 ) -> list[PaymentInstance]:
-    """Seed the current period's occurrences for a resumed (unarchived) bill.
+    """Seed a resumed (unarchived) bill's next occurrence from today onwards.
 
-    Behaves like the normal current-period seeder so a resumed bill looks
-    exactly like an active one: this month's occurrences are created even when
-    their due date has already passed (they show as overdue). Periods before
-    the current month are never backfilled. When the template is not active in
-    the current period (e.g. an annual bill whose month is elsewhere), the next
-    scheduled occurrence is seeded instead.
+    The schedule resumes at the first occurrence on/after today — occurrences
+    whose due date already passed while the bill was archived are never
+    materialized (the bill was inactive across them). Periods before the
+    current month are never backfilled. When the schedule has no occurrence
+    left in the current month (or is not active in it, e.g. an annual bill
+    whose month is elsewhere), the next scheduled occurrence is seeded
+    instead.
 
     Existence is keyed on `(bill_id, due_date)` including soft-deleted
     tombstones (a deleted date is never resurrected) and the occurrence cap is
@@ -585,14 +653,14 @@ def seed_resumed_occurrences(
     without committing — the caller owns the commit.
     """
     current = today.strftime("%Y-%m")
-    raw = _raw_occurrences_in_period(template, current)
-    candidates = _occurrences_in_period(template, current)
+    raw = [d for d in _raw_occurrences_in_period(template, current) if d >= today]
+    candidates = [d for d in _occurrences_in_period(template, current) if d >= today]
 
     if raw and not candidates and template.max_occurrences is not None:
         candidates = _reanchor_for_cap(db, template, raw, current)
     elif not raw:
         candidate = _next_active_occurrence(template, today)
-        if candidate is None:
+        if candidate is None or candidate < today:
             candidates = []
         elif _cap_reached(template, candidate):
             candidates = _reanchor_for_cap(
