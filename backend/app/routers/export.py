@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import current_user
+from app.core.timezones import user_today
 from app.core.ratelimit import rate_limited_by_user
 from app.models.bill import (
     BillFrequency,
@@ -50,10 +51,12 @@ _COLUMNS = [
 
 @router.get("/xlsx")
 def export_xlsx(
-    year: int = Query(default_factory=lambda: date.today().year, ge=2000, le=2100),
+    year: int | None = Query(None, ge=2000, le=2100),
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
+    if year is None:
+        year = user_today(me.timezone).year
     instances = (
         db.query(PaymentInstance)
         .options(

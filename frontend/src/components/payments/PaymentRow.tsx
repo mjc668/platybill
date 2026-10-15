@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { AlertCircle, AtSign, CheckCircle, Loader2, MessageSquare, RotateCcw, Trash2 } from "lucide-react";
+import { AlertCircle, AtSign, CheckCircle, Loader2, MessageSquare, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import type { PaymentInstanceOut } from "@/lib/payments-api";
 import { deletePaymentEvent, revertPay } from "@/lib/payments-api";
 import { categoryLabel } from "@/lib/categories-api";
+import EditAmountDialog from "@/components/payments/EditAmountDialog";
 
 export const STATUS_STYLES: Record<string, string> = {
   upcoming:
@@ -42,6 +43,7 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
   const noteRef = useRef<HTMLDivElement>(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const emailRef = useRef<HTMLDivElement>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     if (!noteOpen) return;
@@ -143,7 +145,10 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
     : null;
 
   return (
-    <div className={`rounded-xl border border-slate-200 px-4 py-3 shadow-sm dark:border-slate-700 transition-colors ${tileGradientClass()}`}>
+    <div
+      data-testid="payment-row"
+      className={`rounded-xl border border-slate-200 px-4 py-3 shadow-sm dark:border-slate-700 transition-colors ${tileGradientClass()}`}
+    >
       <div className="flex flex-col gap-0.5">
         {/* Name + category */}
         <div className="flex items-center gap-2 min-w-0">
@@ -195,6 +200,17 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
               >
                 <CheckCircle size={14} />
                 <span className="hidden sm:inline">{t("markAsPaid")}</span>
+              </button>
+            )}
+            {/* Edit amount — unpaid rows only */}
+            {!readOnly && instance.status !== "paid" && (
+              <button
+                onClick={() => setEditOpen(true)}
+                aria-label={t("editAmount")}
+                title={t("editAmount")}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
+              >
+                <Pencil size={14} />
               </button>
             )}
             {/* Note — legacy popover, only when there are no ledger entries */}
@@ -322,6 +338,17 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
           <p className="mt-1 text-xs text-red-600 dark:text-red-400">{actionError}</p>
         )}
       </div>
+
+      {editOpen && (
+        <EditAmountDialog
+          instance={instance}
+          onClose={() => setEditOpen(false)}
+          onUpdated={(updated) => {
+            setEditOpen(false);
+            onReverted(updated);
+          }}
+        />
+      )}
     </div>
   );
 }

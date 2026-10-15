@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.deps import current_user
+from app.core.timezones import user_today
 from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
 from app.models.payment import Payment
 from app.models.user import User
@@ -236,7 +237,8 @@ def create_bill(
         due_day=due_day,
         notes=body.notes,
         is_paused=body.is_paused,
-        amount_varies=body.amount_varies,
+        # One-off bills are single known charges — never usage-based.
+        amount_varies=body.amount_varies if frequency != BF.one_off else False,
         user_id=me.id,
         start_period=start_period,
     )
@@ -263,7 +265,7 @@ def list_payments(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
-    today = date.today()
+    today = user_today(me.timezone)
     current_month = today.strftime("%Y-%m")
     if month is None:
         month = current_month
@@ -353,7 +355,7 @@ def add_payment(
         db,
         instance,
         amount=body.amount,
-        paid_on=body.paid_on or date.today(),
+        paid_on=body.paid_on or user_today(me.timezone),
         note=body.note,
     )
     paid_due_date = instance.due_date
@@ -421,7 +423,7 @@ def mark_paid(
         db,
         instance,
         amount=amount,
-        paid_on=date.today(),
+        paid_on=user_today(me.timezone),
         note=body.notes,
     )
     paid_due_date = instance.due_date
@@ -486,7 +488,7 @@ def needs_confirmation(
     Only instances whose period has arrived are surfaced; future pre-generated
     periods are not nagged about.
     """
-    current_month = date.today().strftime("%Y-%m")
+    current_month = user_today(me.timezone).strftime("%Y-%m")
     instances = (
         db.query(PaymentInstance)
         .options(
@@ -532,7 +534,7 @@ def update_instance_amount(
         )
     instance.amount = body.amount
     instance.amount_estimated = False
-    recalculate_instance(instance)
+    recalculate_instance(instance, today=user_today(me.timezone))
     db.commit()
     db.refresh(instance)
     return _to_out(instance)
@@ -546,7 +548,7 @@ def sync_instances(
 ):
     """Explicitly seed payment instances for the given month (or current month).
     Replaces the previous seed-on-read side effect in list_payments."""
-    today = date.today()
+    today = user_today(me.timezone)
     current_month = today.strftime("%Y-%m")
     target = month or current_month
     if target >= current_month:
@@ -578,7 +580,7 @@ def generate_instances(
             raise HTTPException(status_code=404, detail="Bill not found")
 
     created, bill_count = generate_future_instances(
-        db, me.id, body.months, body.bill_ids
+        db, me.id, body.months, body.bill_ids, today=user_today(me.timezone)
     )
     return GenerateInstancesOut(
         created=created, bill_count=bill_count, months=body.months
@@ -604,10 +606,11 @@ def unarchive_bill(
     bill = _get_visible_bill(db, bill_id, me)
     bill.is_archived = False
     bill.is_paused = False
+    today = user_today(me.timezone)
     if bill.archived_at is not None:
-        cancel_archived_occurrences(db, bill, bill.archived_at, date.today())
+        cancel_archived_occurrences(db, bill, bill.archived_at, today)
     bill.archived_at = None
-    seed_resumed_occurrences(db, bill, date.today())
+    seed_resumed_occurrences(db, bill, today)
     db.commit()
     db.refresh(bill)
     return bill
@@ -620,7 +623,7 @@ def has_deleted_future(
     me: User = Depends(current_user),
 ):
     bill = _get_visible_bill(db, bill_id, me)
-    today = date.today()
+    today = user_today(me.timezone)
     exists = (
         db.query(PaymentInstance)
         .filter(
@@ -660,6 +663,8 @@ def update_bill(
     if effective_frequency == BF.one_off:
         effective_interval = 1
         effective_max_occurrences = None  # one-off bills ignore the cap
+        # One-off bills are single known charges — never usage-based.
+        updates["amount_varies"] = False
 
     error = validate_schedule(
         effective_frequency, effective_interval, effective_start_date
@@ -712,7 +717,7 @@ def update_bill(
     if effective_frequency == BF.weekly:
         if schedule_changed and bill.start_date is not None:
             bill.start_period = bill.start_date.strftime("%Y-%m")
-            recompute_weekly_instances(db, bill, date.today())
+            recompute_weekly_instances(db, bill, user_today(me.timezone))
     elif due_day_changed:
         unpaid = (
             db.query(PaymentInstance)
@@ -758,7 +763,7 @@ def update_bill(
                     db.delete(inst)
 
     if body.recreate_deleted_future:
-        today = date.today()
+        today = user_today(me.timezone)
         tombstones = (
             db.query(PaymentInstance)
             .filter(
@@ -785,7 +790,7 @@ def update_bill(
             inst.status = PaymentStatus.upcoming
 
     if prune_needed:
-        prune_occurrences_beyond_cap(db, bill, date.today())
+        prune_occurrences_beyond_cap(db, bill, user_today(me.timezone))
 
     db.commit()
     db.refresh(bill)

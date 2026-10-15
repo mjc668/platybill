@@ -21,6 +21,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.timezones import user_today
 from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, PaymentStatus
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
@@ -241,14 +242,16 @@ def confirm_draft(
     # App-wide invariant: an instance's period is its due date's month.
     # The document's billing period can disagree with the due date (e.g. an
     # August usage period billed on 15 October), so the due date wins.
+    user = db.get(User, draft.user_id)
+    local_today = user_today(user.timezone if user else None)
     period = (
         draft.due_date.strftime("%Y-%m")
         if draft.due_date
-        else (draft.period or date.today().strftime("%Y-%m"))
+        else (draft.period or local_today.strftime("%Y-%m"))
     )
     # An explicit or future period is a distinct bill: only fall back to a
     # pending estimate when the document has no period and is not future-dated.
-    fallback_to_estimate = draft.period is None and period <= date.today().strftime(
+    fallback_to_estimate = draft.period is None and period <= local_today.strftime(
         "%Y-%m"
     )
     instance = _target_instance(

@@ -28,6 +28,7 @@ from app.services.reminder_job import (
     send_catchup_reminders,
     send_daily_reminders,
     send_monthly_summary_for_user,
+    send_upcoming_digest_for_user,
 )
 
 
@@ -84,12 +85,12 @@ def _make_bill(db, user_id: int) -> BillTemplate:
 
 
 def _make_instance(db, bill_id: int, due_date: date, **kwargs) -> PaymentInstance:
+    kwargs.setdefault("status", PaymentStatus.upcoming)
     inst = PaymentInstance(
         bill_id=bill_id,
         period=due_date.strftime("%Y-%m"),
         due_date=due_date,
         amount=Decimal("99.99"),
-        status=PaymentStatus.upcoming,
         **kwargs,
     )
     db.add(inst)
@@ -603,3 +604,117 @@ def test_master_toggle_off_skips_monthly_summary_scheduler(
         send_daily_reminders(db_sessionmaker, send_minute=480)
 
     mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Weekly due-preview digest
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.reminder_job.send_upcoming_digest_email")
+def test_digest_classifies_rows_by_local_day_and_window(mock_send, db_session):
+    """Overdue vs upcoming is decided in the user's timezone; window is N days."""
+    # 23:30 UTC is already the 16th in Kiritimati (UTC+14) but still the 15th
+    # in UTC — the digest must use the user's local day.
+    fixed_now = datetime(2026, 10, 15, 23, 30, tzinfo=timezone.utc)
+    user = _make_user(db_session)
+    user.timezone = "Pacific/Kiritimati"
+    user.upcoming_digest_enabled = True
+    user.upcoming_digest_days = 7
+    bill = _make_bill(db_session, user.id)
+
+    _make_instance(db_session, bill.id, due_date=date(2026, 10, 15))  # local overdue
+    _make_instance(db_session, bill.id, due_date=date(2026, 10, 16))  # local today
+    _make_instance(db_session, bill.id, due_date=date(2026, 10, 22))  # inside window
+    _make_instance(db_session, bill.id, due_date=date(2026, 10, 23))  # at boundary: out
+    _make_instance(
+        db_session, bill.id, due_date=date(2026, 10, 17), status=PaymentStatus.paid
+    )
+    _make_instance(
+        db_session, bill.id, due_date=date(2026, 10, 18), amount_estimated=True
+    )
+    _make_instance(db_session, bill.id, due_date=date(2026, 10, 19), is_deleted=True)
+    db_session.commit()
+
+    with _channels():
+        result = send_upcoming_digest_for_user(db_session, user, now_utc=fixed_now)
+
+    assert result is True
+    mock_send.assert_called_once()
+    kwargs = mock_send.call_args.kwargs
+    assert kwargs["days"] == 7
+    assert [r["due_date"] for r in kwargs["overdue_rows"]] == ["2026-10-15"]
+    assert [r["due_date"] for r in kwargs["upcoming_rows"]] == [
+        "2026-10-16",
+        "2026-10-22",
+    ]
+
+
+@patch("app.services.reminder_job.send_monthly_summary_email")
+@patch("app.services.reminder_job.send_upcoming_digest_email")
+def test_daily_job_sends_digest_once_on_matching_local_slot(
+    mock_digest, mock_summary, db_session, db_sessionmaker
+):
+    """The scheduler sends on the chosen weekday/minute, once per local day."""
+    today = _today_utc()
+    user = _make_user(db_session)
+    user.upcoming_digest_enabled = True
+    user.upcoming_digest_weekday = today.weekday()
+    user.upcoming_digest_minute = 480
+    bill = _make_bill(db_session, user.id)
+    _make_instance(db_session, bill.id, due_date=today + timedelta(days=3))
+    db_session.commit()
+    user_id = user.id
+
+    with (
+        _channels(),
+        patch(
+            "app.services.reminder_job.datetime",
+            wraps=__import__("datetime", fromlist=["datetime"]).datetime,
+        ) as mock_dt,
+    ):
+        mock_dt.now.return_value = datetime(
+            today.year, today.month, today.day, 8, 0, tzinfo=timezone.utc
+        )
+        send_daily_reminders(db_sessionmaker, send_minute=480)
+        mock_digest.assert_called_once()
+
+        db_session.expire_all()
+        assert db_session.get(User, user_id).upcoming_digest_last_sent == (
+            today.isoformat()
+        )
+
+        # A later tick on the same local day must not resend.
+        mock_digest.reset_mock()
+        send_daily_reminders(db_sessionmaker, send_minute=600)
+        mock_digest.assert_not_called()
+
+
+@patch("app.services.reminder_job.send_monthly_summary_email")
+@patch("app.services.reminder_job.send_upcoming_digest_email")
+def test_digest_not_sent_on_other_weekdays_or_when_disabled(
+    mock_digest, mock_summary, db_session, db_sessionmaker
+):
+    today = _today_utc()
+    wrong_day_user = _make_user(db_session, email="wrongday@test.com")
+    wrong_day_user.upcoming_digest_enabled = True
+    wrong_day_user.upcoming_digest_weekday = (today.weekday() + 1) % 7
+    wrong_day_user.upcoming_digest_minute = 0
+    disabled_user = _make_user(db_session, email="disabled@test.com")
+    disabled_user.upcoming_digest_enabled = False
+    disabled_user.upcoming_digest_weekday = today.weekday()
+    db_session.commit()
+
+    with (
+        _channels(),
+        patch(
+            "app.services.reminder_job.datetime",
+            wraps=__import__("datetime", fromlist=["datetime"]).datetime,
+        ) as mock_dt,
+    ):
+        mock_dt.now.return_value = datetime(
+            today.year, today.month, today.day, 8, 0, tzinfo=timezone.utc
+        )
+        send_daily_reminders(db_sessionmaker, send_minute=480)
+
+    mock_digest.assert_not_called()

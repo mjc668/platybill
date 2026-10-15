@@ -6,14 +6,17 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from app.core.config import settings
 from app.core.logging_utils import mask_email
+from app.core.timezones import user_now, user_today
 from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
 from app.models.user import User
 from app.services import notifications
 from app.services.email import (
     build_monthly_summary_text,
     build_reminder_text,
+    build_upcoming_digest_text,
     send_monthly_summary_email,
     send_reminder_email,
+    send_upcoming_digest_email,
 )
 from app.services.notifications import NotificationChannel
 
@@ -185,6 +188,12 @@ def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
     return False
 
 
+def _local_minute(user: User, now_utc: datetime | None = None) -> int:
+    """The user's current minute-of-day in their timezone (server-local unset)."""
+    local_now = user_now(user.timezone, now_utc=now_utc)
+    return local_now.hour * 60 + local_now.minute
+
+
 def send_reminders_for_user(db: Session, user: User) -> int:
     """Send due reminders for a single user. Returns count of emails sent."""
     if _is_blocked_domain(user.email):
@@ -194,8 +203,8 @@ def send_reminders_for_user(db: Session, user: User) -> int:
             user.id,
         )
         return 0
-    now_utc = datetime.now(timezone.utc)
-    today = now_utc.date()
+    # Reminder windows follow the user's local calendar day.
+    today = user_today(user.timezone, now_utc=datetime.now(timezone.utc))
     tomorrow = today + timedelta(days=1)
     two_days_out = today + timedelta(days=2)
     yesterday = today - timedelta(days=1)
@@ -250,6 +259,151 @@ def send_reminders_for_user(db: Session, user: User) -> int:
     return sent
 
 
+def send_upcoming_digest_for_user(
+    db: Session, user: User, now_utc: datetime | None = None
+) -> bool:
+    """Send the weekly due-overview digest for a single user.
+
+    Covers unpaid overdue rows plus everything due within the user's
+    configured window (in their local timezone). Returns True on success.
+    Archived, deleted and estimated instances stay out - the digest mirrors
+    the Payments ledger.
+    """
+    if not notifications.any_channel_configured():
+        return False
+    if _is_blocked_domain(user.email):
+        logger.debug(
+            "Skipping due digest for blocked domain: %s (user %s)",
+            mask_email(user.email),
+            user.id,
+        )
+        return False
+
+    today = user_today(user.timezone, now_utc=now_utc)
+    window_end = today + timedelta(days=user.upcoming_digest_days)
+    instances = (
+        db.query(PaymentInstance)
+        .options(selectinload(PaymentInstance.template))
+        .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .filter(
+            BillTemplate.user_id == user.id,
+            BillTemplate.is_archived.is_(False),
+            BillTemplate.is_deleted.is_(False),
+            PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.amount_estimated.is_(False),
+            PaymentInstance.status != PaymentStatus.paid,
+            PaymentInstance.due_date < window_end,
+        )
+        .order_by(PaymentInstance.due_date)
+        .all()
+    )
+
+    overdue_rows: list[dict[str, object]] = []
+    upcoming_rows: list[dict[str, object]] = []
+    for inst in instances:
+        row = {
+            "name": inst.template.name if inst.template else f"bill#{inst.bill_id}",
+            "due_date": inst.due_date.isoformat(),
+            "amount": inst.amount,
+            "currency": inst.template.currency if inst.template else "PLN",
+        }
+        (overdue_rows if inst.due_date < today else upcoming_rows).append(row)
+
+    lang = user.language_preference or "en"
+    days = user.upcoming_digest_days
+    title, body_text = build_upcoming_digest_text(
+        days=days,
+        overdue_rows=overdue_rows,
+        upcoming_rows=upcoming_rows,
+        language=lang,
+    )
+
+    def _send_email() -> None:
+        smtp_host = settings.smtp_host
+        if smtp_host is None:
+            raise OSError("SMTP not configured")
+        send_upcoming_digest_email(
+            smtp_host=smtp_host,
+            smtp_port=settings.smtp_port,
+            smtp_user=settings.smtp_user,
+            smtp_password=(
+                settings.smtp_password.get_secret_value()
+                if settings.smtp_password
+                else None
+            ),
+            smtp_use_tls=settings.smtp_use_tls,
+            from_addr=settings.reminder_from or settings.smtp_user or "",
+            to_addr=user.email,
+            days=days,
+            overdue_rows=overdue_rows,
+            upcoming_rows=upcoming_rows,
+            language=lang,
+        )
+
+    result = notifications.deliver(
+        title=title,
+        body=body_text,
+        notify_type="info",
+        email_sender=_send_email,
+    )
+    if result.ok:
+        logger.info(
+            "Sent due digest to %s (user %s, %d overdue, %d upcoming) via %s",
+            mask_email(user.email),
+            user.id,
+            len(overdue_rows),
+            len(upcoming_rows),
+            result.channel.value if result.channel else "unknown",
+        )
+    else:
+        logger.warning(
+            "Due digest delivery failed for %s (user %s)",
+            mask_email(user.email),
+            user.id,
+        )
+    return result.ok
+
+
+def _send_due_digests(
+    db: Session, *, now_utc: datetime, send_minute: int | None
+) -> int:
+    """Send digests whose local slot has arrived. Retries every scheduler tick.
+
+    A user's slot is their chosen local weekday at (or after) their chosen
+    local minute; `upcoming_digest_last_sent` keyed on the local date keeps it
+    to one send per week. `send_minute` overrides "now" for tests.
+    """
+    sent = 0
+    users = (
+        db.query(User)
+        .filter(
+            User.is_active.is_(True),
+            User.email_reminders_enabled.is_(True),
+            User.upcoming_digest_enabled.is_(True),
+        )
+        .all()
+    )
+    for user in users:
+        local_now = user_now(user.timezone, now_utc=now_utc)
+        local_date = local_now.strftime("%Y-%m-%d")
+        if local_now.weekday() != user.upcoming_digest_weekday:
+            continue
+        local_minute = (
+            send_minute
+            if send_minute is not None
+            else local_now.hour * 60 + local_now.minute
+        )
+        if local_minute < user.upcoming_digest_minute:
+            continue
+        if user.upcoming_digest_last_sent == local_date:
+            continue
+        if send_upcoming_digest_for_user(db, user, now_utc):
+            user.upcoming_digest_last_sent = local_date
+            db.commit()
+            sent += 1
+    return sent
+
+
 def send_daily_reminders(
     SessionLocal: sessionmaker, send_minute: int | None = None
 ) -> None:
@@ -258,11 +412,7 @@ def send_daily_reminders(
         return
 
     now_utc = datetime.now(timezone.utc)
-    current_minute = (
-        send_minute if send_minute is not None else now_utc.hour * 60 + now_utc.minute
-    )
-    today = now_utc.date()
-    logger.info("Reminder job started (today=%s UTC, minute=%d)", today, current_minute)
+    logger.info("Reminder job started (UTC now=%s)", now_utc.isoformat())
 
     db: Session = SessionLocal()
     sent = 0
@@ -272,7 +422,6 @@ def send_daily_reminders(
             .filter(
                 User.is_active.is_(True),
                 User.email_reminders_enabled.is_(True),
-                User.reminder_send_minute == current_minute,
                 (
                     User.notify_1_day_before.is_(True)
                     | User.notify_2_days_before.is_(True)
@@ -283,32 +432,46 @@ def send_daily_reminders(
             .all()
         )
 
+        # The send minute is local to each user's timezone (server-local when
+        # unset), so matching happens in Python — offsets differ per user.
         for user in users:
+            local_minute = (
+                send_minute if send_minute is not None else _local_minute(user, now_utc)
+            )
+            if user.reminder_send_minute != local_minute:
+                continue
             sent += send_reminders_for_user(db, user)
 
-        # On the last day of the month, send monthly summaries to all eligible
-        # users regardless of reminder_send_minute — natural retry every 30 min.
-        # Note: the query-then-flag pattern is not atomic; two concurrent scheduler
-        # runs could both see last_sent=NULL and both send. Acceptable at household
-        # scale given the 30-min cadence makes overlap unlikely.
-        is_last_day = today.day == calendar.monthrange(today.year, today.month)[1]
-        if is_last_day:
-            current_month = today.strftime("%Y-%m")
-            summary_users = (
-                db.query(User)
-                .filter(
-                    User.is_active.is_(True),
-                    User.email_reminders_enabled.is_(True),
-                    User.monthly_summary_enabled.is_(True),
-                    (User.monthly_summary_last_sent.is_(None))
-                    | (User.monthly_summary_last_sent != current_month),
-                )
-                .all()
+        # On each user's last local day of the month, send their monthly
+        # summary regardless of reminder_send_minute — natural retry every
+        # 30 min. Note: the query-then-flag pattern is not atomic; two
+        # concurrent scheduler runs could both see last_sent=NULL and both
+        # send. Acceptable at household scale given the 30-min cadence.
+        summary_users = (
+            db.query(User)
+            .filter(
+                User.is_active.is_(True),
+                User.email_reminders_enabled.is_(True),
+                User.monthly_summary_enabled.is_(True),
             )
-            for u in summary_users:
-                if send_monthly_summary_for_user(db, u, current_month):
-                    u.monthly_summary_last_sent = current_month
-                    db.commit()
+            .all()
+        )
+        for u in summary_users:
+            local_today = user_today(u.timezone, now_utc=now_utc)
+            if (
+                local_today.day
+                != calendar.monthrange(local_today.year, local_today.month)[1]
+            ):
+                continue
+            current_month = local_today.strftime("%Y-%m")
+            if u.monthly_summary_last_sent == current_month:
+                continue
+            if send_monthly_summary_for_user(db, u, current_month):
+                u.monthly_summary_last_sent = current_month
+                db.commit()
+
+        # Weekly due-overview digests whose local slot has arrived.
+        sent += _send_due_digests(db, now_utc=now_utc, send_minute=send_minute)
     finally:
         db.close()
 
@@ -326,15 +489,7 @@ def send_catchup_reminders(
         return
 
     now_utc = datetime.now(timezone.utc)
-    current_minute = (
-        send_minute if send_minute is not None else now_utc.hour * 60 + now_utc.minute
-    )
-    today = now_utc.date()
-    logger.info(
-        "Catch-up reminders started (today=%s UTC, up to minute=%d)",
-        today,
-        current_minute,
-    )
+    logger.info("Catch-up reminders started (UTC now=%s)", now_utc.isoformat())
 
     db: Session = SessionLocal()
     sent = 0
@@ -344,7 +499,6 @@ def send_catchup_reminders(
             .filter(
                 User.is_active.is_(True),
                 User.email_reminders_enabled.is_(True),
-                User.reminder_send_minute <= current_minute,
                 (
                     User.notify_1_day_before.is_(True)
                     | User.notify_2_days_before.is_(True)
@@ -354,28 +508,43 @@ def send_catchup_reminders(
             )
             .all()
         )
+        # Each user's scheduled minute is local to their timezone
+        # (server-local when unset); catch up everyone whose time has passed.
         for user in users:
+            local_minute = (
+                send_minute if send_minute is not None else _local_minute(user, now_utc)
+            )
+            if user.reminder_send_minute > local_minute:
+                continue
             sent += send_reminders_for_user(db, user)
 
-        # Also catch up missed monthly summaries on startup if today is last day.
-        is_last_day = today.day == calendar.monthrange(today.year, today.month)[1]
-        if is_last_day:
-            current_month = today.strftime("%Y-%m")
-            summary_users = (
-                db.query(User)
-                .filter(
-                    User.is_active.is_(True),
-                    User.email_reminders_enabled.is_(True),
-                    User.monthly_summary_enabled.is_(True),
-                    (User.monthly_summary_last_sent.is_(None))
-                    | (User.monthly_summary_last_sent != current_month),
-                )
-                .all()
+        # Also catch up missed monthly summaries on startup on each user's
+        # last local day of the month.
+        summary_users = (
+            db.query(User)
+            .filter(
+                User.is_active.is_(True),
+                User.email_reminders_enabled.is_(True),
+                User.monthly_summary_enabled.is_(True),
             )
-            for u in summary_users:
-                if send_monthly_summary_for_user(db, u, current_month):
-                    u.monthly_summary_last_sent = current_month
-                    db.commit()
+            .all()
+        )
+        for u in summary_users:
+            local_today = user_today(u.timezone, now_utc=now_utc)
+            if (
+                local_today.day
+                != calendar.monthrange(local_today.year, local_today.month)[1]
+            ):
+                continue
+            current_month = local_today.strftime("%Y-%m")
+            if u.monthly_summary_last_sent == current_month:
+                continue
+            if send_monthly_summary_for_user(db, u, current_month):
+                u.monthly_summary_last_sent = current_month
+                db.commit()
+
+        # Weekly due-overview digests whose local slot has passed today.
+        sent += _send_due_digests(db, now_utc=now_utc, send_minute=send_minute)
     finally:
         db.close()
 

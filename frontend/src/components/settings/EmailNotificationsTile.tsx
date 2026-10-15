@@ -1,8 +1,8 @@
 "use client";
 
 import { AlertTriangle, BarChart2, ChevronRight, HelpCircle, Loader2, Mail, Send } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import {
   fetchNotificationStatus,
   fetchServerTime,
@@ -40,6 +40,7 @@ export function EmailNotificationsTile({
   onToggle?: () => void;
 }) {
   const tp = useTranslations("SettingsPage");
+  const locale = useLocale();
 
   const [emailEnabled, setEmailEnabled] = useState(profile.email_reminders_enabled);
   const [notify2, setNotify2] = useState(profile.notify_2_days_before);
@@ -48,6 +49,22 @@ export function EmailNotificationsTile({
   const [notify1After, setNotify1After] = useState(profile.notify_1_day_after);
   const [sendMinute, setSendMinute] = useState(profile.reminder_send_minute);
   const [monthlySummary, setMonthlySummary] = useState(profile.monthly_summary_enabled);
+  const [digestEnabled, setDigestEnabled] = useState(profile.upcoming_digest_enabled);
+  const [digestWeekday, setDigestWeekday] = useState(profile.upcoming_digest_weekday);
+  const [digestMinute, setDigestMinute] = useState(profile.upcoming_digest_minute);
+  const [digestDays, setDigestDays] = useState(profile.upcoming_digest_days);
+  const [isTogglingDigest, setIsTogglingDigest] = useState(false);
+
+  // 2024-01-01 was a Monday; index 0 = Monday matches the backend convention.
+  const weekdayLabels = useMemo(() => {
+    const fmt = new Intl.DateTimeFormat(locale, {
+      weekday: "long",
+      timeZone: "UTC",
+    });
+    return Array.from({ length: 7 }, (_, i) =>
+      fmt.format(new Date(Date.UTC(2024, 0, 1 + i))),
+    );
+  }, [locale]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
@@ -95,7 +112,10 @@ export function EmailNotificationsTile({
     notify1 !== profile.notify_1_day_before ||
     notifyOn !== profile.notify_on_day ||
     notify1After !== profile.notify_1_day_after ||
-    sendMinute !== profile.reminder_send_minute;
+    sendMinute !== profile.reminder_send_minute ||
+    digestWeekday !== profile.upcoming_digest_weekday ||
+    digestMinute !== profile.upcoming_digest_minute ||
+    digestDays !== profile.upcoming_digest_days;
 
   const noneSelected = !notify2 && !notify1 && !notifyOn && !notify1After;
   const smtpConfigured = notificationStatus?.smtp_configured ?? false;
@@ -127,6 +147,9 @@ export function EmailNotificationsTile({
     setNotifyOn(profile.notify_on_day);
     setNotify1After(profile.notify_1_day_after);
     setSendMinute(profile.reminder_send_minute);
+    setDigestWeekday(profile.upcoming_digest_weekday);
+    setDigestMinute(profile.upcoming_digest_minute);
+    setDigestDays(profile.upcoming_digest_days);
     setSaveError(null);
   }
 
@@ -143,6 +166,19 @@ export function EmailNotificationsTile({
     }
   }
 
+  async function handleDigestEnabledChange(value: boolean) {
+    setDigestEnabled(value);
+    setIsTogglingDigest(true);
+    try {
+      const updated = await updateMe({ upcoming_digest_enabled: value });
+      onProfileUpdate(updated);
+    } catch {
+      setDigestEnabled(!value);
+    } finally {
+      setIsTogglingDigest(false);
+    }
+  }
+
   async function save() {
     setIsSaving(true);
     setSaveError(null);
@@ -153,6 +189,9 @@ export function EmailNotificationsTile({
         notify_on_day: notifyOn,
         notify_1_day_after: notify1After,
         reminder_send_minute: sendMinute,
+        upcoming_digest_weekday: digestWeekday,
+        upcoming_digest_minute: digestMinute,
+        upcoming_digest_days: digestDays,
       });
       onProfileUpdate(updated);
     } catch {
@@ -343,6 +382,61 @@ export function EmailNotificationsTile({
                 : tp("emailNotifications.sendMonthlySummaryNoData")}
             </p>
           )}
+
+          <div className="pt-1 border-t border-slate-100 dark:border-slate-700">
+            <Switch
+              checked={digestEnabled}
+              onChange={handleDigestEnabledChange}
+              label={tp("emailNotifications.digestToggle")}
+              disabled={isTogglingDigest}
+            />
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+              {tp("emailNotifications.digestHint")}
+            </p>
+            <div
+              className={`mt-2 flex flex-wrap items-center gap-2 ${
+                digestEnabled ? "" : "opacity-50 pointer-events-none"
+              }`}
+            >
+              <select
+                aria-label={tp("emailNotifications.digestWeekdayLabel")}
+                value={digestWeekday}
+                onChange={(e) => setDigestWeekday(Number(e.target.value))}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm outline-none transition-all hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-500 dark:focus:border-blue-600 dark:focus:ring-blue-900/40"
+              >
+                {weekdayLabels.map((label, i) => (
+                  <option key={label} value={i}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label={tp("emailNotifications.digestTimeLabel")}
+                value={digestMinute}
+                onChange={(e) => setDigestMinute(Number(e.target.value))}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm outline-none transition-all hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-500 dark:focus:border-blue-600 dark:focus:ring-blue-900/40"
+              >
+                {SLOTS.map((h) => (
+                  <option key={h} value={h}>{fmtSlot(h)}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400">
+                {tp("emailNotifications.digestDaysLabel")}
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={digestDays}
+                  onChange={(e) =>
+                    setDigestDays(
+                      Math.min(30, Math.max(1, Number(e.target.value) || 1)),
+                    )
+                  }
+                  className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 shadow-sm outline-none transition-all hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-500 dark:focus:border-blue-600 dark:focus:ring-blue-900/40"
+                />
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 

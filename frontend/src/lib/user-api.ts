@@ -3,6 +3,7 @@ import { apiFetch } from "@/lib/api";
 export interface UserProfile {
   email: string;
   language_preference: "en" | "pl" | "de" | null;
+  timezone: string | null;
   default_currency: string | null;
   email_reminders_enabled: boolean;
   notify_2_days_before: boolean;
@@ -11,6 +12,10 @@ export interface UserProfile {
   notify_1_day_after: boolean;
   reminder_send_minute: number;
   monthly_summary_enabled: boolean;
+  upcoming_digest_enabled: boolean;
+  upcoming_digest_weekday: number;
+  upcoming_digest_minute: number;
+  upcoming_digest_days: number;
 }
 
 export function fetchMe(): Promise<UserProfile> {
@@ -22,6 +27,7 @@ export function updateMe(
     Pick<
       UserProfile,
       | "language_preference"
+      | "timezone"
       | "default_currency"
       | "email_reminders_enabled"
       | "notify_2_days_before"
@@ -30,6 +36,10 @@ export function updateMe(
       | "notify_1_day_after"
       | "reminder_send_minute"
       | "monthly_summary_enabled"
+      | "upcoming_digest_enabled"
+      | "upcoming_digest_weekday"
+      | "upcoming_digest_minute"
+      | "upcoming_digest_days"
     >
   >,
 ): Promise<UserProfile> {

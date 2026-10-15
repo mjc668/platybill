@@ -29,6 +29,12 @@ class User(Base):
     language_preference: Mapped[str | None] = mapped_column(
         String(5), nullable=True, default=None
     )
+    # IANA timezone name (e.g. "Australia/Sydney"). Drives day detection
+    # (overdue, due-soon, resume dates) and reminder scheduling. NULL falls
+    # back to UTC, the pre-timezone behaviour.
+    timezone: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default=None
+    )
     default_currency: Mapped[str | None] = mapped_column(
         String(10), nullable=True, default=None
     )
@@ -55,6 +61,24 @@ class User(Base):
     )
     monthly_summary_last_sent: Mapped[str | None] = mapped_column(
         String(7), nullable=True, default=None
+    )
+    # Weekly due-overview digest: sent on the chosen local weekday at the
+    # chosen local minute, covering overdue plus the next N days of dues.
+    # `upcoming_digest_last_sent` stores the local YYYY-MM-DD it last went out.
+    upcoming_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    upcoming_digest_weekday: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default=text("0")
+    )  # 0=Monday .. 6=Sunday, local to the user's timezone
+    upcoming_digest_minute: Mapped[int] = mapped_column(
+        nullable=False, default=480, server_default=text("480")
+    )
+    upcoming_digest_days: Mapped[int] = mapped_column(
+        nullable=False, default=7, server_default=text("7")
+    )
+    upcoming_digest_last_sent: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=lambda: datetime.now(timezone.utc)

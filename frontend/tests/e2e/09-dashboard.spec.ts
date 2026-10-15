@@ -26,10 +26,11 @@ test('dashboard renders summary, trend chart and attention link after a partial 
 
   // Step: record a partial payment through the UI
   await page.goto('/dashboard/payments');
-  await expect(page.getByText(billName)).toBeVisible();
+  const row = page.getByTestId('payment-row').filter({ hasText: billName }).first();
+  await expect(row).toBeVisible();
 
   const half = (parseFloat(BILL_AMOUNT) / 2).toFixed(2);
-  await page.getByRole('button', { name: 'Mark as Paid' }).click();
+  await row.getByRole('button', { name: 'Mark as Paid' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await dialog.getByLabel('Amount paid').fill(half);
@@ -60,7 +61,11 @@ test('dashboard renders summary, trend chart and attention link after a partial 
   await expect(next30dCard).toContainText('PLN');
 
   // Assert: the attention list shows the unpaid bill and links to its period
-  const attentionRow = page.getByRole('link', { name: new RegExp(billName) });
+  // Several occurrences can be listed (overdue + upcoming); the overdue
+  // link for this month's entry sorts first.
+  const attentionRow = page
+    .getByRole('link', { name: new RegExp(billName) })
+    .first();
   await expect(attentionRow).toBeVisible();
   const month = new Date().toISOString().slice(0, 7);
   await expect(attentionRow).toHaveAttribute(

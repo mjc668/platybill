@@ -373,3 +373,27 @@ def test_old_backup_without_flags_restores_as_fixed(client_db):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_edit_amount_of_plain_instance(client_db):
+    """Plain (non-estimated) unpaid instances can have their amount corrected."""
+    client, db = client_db
+    token = register_and_login(client, "var_edit@test.com")
+    bill = _create_bill(client, token, {"amount_varies": False})
+    today = _today_utc()
+    inst = _insert_instance(
+        db, bill["id"], today.strftime("%Y-%m"), today, "80.00", estimated=False
+    )
+
+    r = client.patch(
+        f"/bills/payments/{inst.id}/amount",
+        json={"amount": "84.25"},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["amount"] == "84.25"
+    assert body["amount_estimated"] is False
+
+    listed = client.get("/bills/payments", headers=auth(token)).json()
+    assert [(i["id"], i["amount"]) for i in listed] == [(inst.id, "84.25")]

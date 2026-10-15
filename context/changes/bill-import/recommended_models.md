@@ -13,9 +13,9 @@
 
 ## Defaults in the app
 
-- `OLLAMA_MODEL=numind/nuextract3:q4_k_m` — single-phase default (GGUF tag)
-- `OLLAMA_OCR_MODEL=maternion/LightOnOCR-2:1b` — optional two-phase mode
-  (OCR → text model), used automatically when the primary parse fails
+- `OLLAMA_MODEL=gemma4` — ships as the default (best measured accuracy/speed)
+- `OLLAMA_OCR_MODEL=maternion/LightOnOCR-2:1b` — OCR phase of the two-phase
+  path (OCR → text model), used automatically when the primary parse fails
 - `OLLAMA_TEXT_MODEL=gemma4` — digital-PDF text extraction and phase 2
 
 ## Benchmark (three synthetic utility bills, through the app)

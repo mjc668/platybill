@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.security import validate_password_strength
+from app.core.timezones import validate_timezone
 
 _CURRENCY_PATTERN = re.compile(r"^[A-Z0-9]{2,10}$")
 _BCRYPT_MAX_PASSWORD_BYTES = 72
@@ -61,6 +62,7 @@ class UserProfileOut(BaseModel):
 
     email: EmailStr
     language_preference: str | None
+    timezone: str | None
     default_currency: str | None
     email_reminders_enabled: bool
     notify_2_days_before: bool
@@ -69,10 +71,15 @@ class UserProfileOut(BaseModel):
     notify_1_day_after: bool
     reminder_send_minute: int
     monthly_summary_enabled: bool
+    upcoming_digest_enabled: bool
+    upcoming_digest_weekday: int
+    upcoming_digest_minute: int
+    upcoming_digest_days: int
 
 
 class UserProfileUpdate(BaseModel):
     language_preference: Literal["en", "pl", "de"] | None = None
+    timezone: str | None = None
     default_currency: str | None = None
     email_reminders_enabled: bool | None = None
     notify_2_days_before: bool | None = None
@@ -81,6 +88,15 @@ class UserProfileUpdate(BaseModel):
     notify_1_day_after: bool | None = None
     reminder_send_minute: Annotated[int, Field(ge=0, le=1410)] | None = None
     monthly_summary_enabled: bool | None = None
+    upcoming_digest_enabled: bool | None = None
+    upcoming_digest_weekday: Annotated[int, Field(ge=0, le=6)] | None = None
+    upcoming_digest_minute: Annotated[int, Field(ge=0, le=1410)] | None = None
+    upcoming_digest_days: Annotated[int, Field(ge=1, le=30)] | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone_name(cls, v: str | None) -> str | None:
+        return validate_timezone(v)
 
     @field_validator("default_currency")
     @classmethod

@@ -365,6 +365,7 @@
         "status": {"upcoming": "Upcoming", "overdue": "Overdue", "paid": "Paid"},
         "dueToday": "Today",
         "markAsPaid": "Mark as Paid",
+        "editAmount": "Edit amount",
         "revert": "Revert payment",
         "due": "Due",
         "paidOn": "Paid on",
@@ -389,6 +390,16 @@
         "confirm": "Delete",
         "deleting": "Deleting…",
         "deleteFailed": "Failed to delete payment."
+    },
+    "EditAmountDialog": {
+        "title": "Edit amount for “{billName}”",
+        "description": "Correct the amount for this payment entry.",
+        "amountLabel": "Amount ({currency})",
+        "cancel": "Cancel",
+        "save": "Save",
+        "saving": "Saving…",
+        "invalidAmount": "Enter a valid amount greater than zero.",
+        "saveFailed": "Failed to save the amount."
     },
     "ConfirmAmountDialog": {
         "title": "Confirm {billName}",
@@ -496,7 +507,11 @@
             "defaultCurrencyCustomAriaLabel": "Custom currency code",
             "defaultCurrencyPlaceholder": "e.g. CHF",
             "defaultCurrencyInvalid": "Enter a 2–10 character currency code (letters and digits).",
-            "defaultCurrencySaveFailed": "Failed to save the default currency."
+            "defaultCurrencySaveFailed": "Failed to save the default currency.",
+            "timezoneLabel": "Timezone",
+            "timezoneHint": "Used for due dates, overdue detection and notification times.",
+            "timezoneDefault": "Default (UTC)",
+            "timezoneSaveFailed": "Failed to save the timezone."
         },
         "emailNotifications": {
             "title": "Notifications",
@@ -524,7 +539,12 @@
             "sendMonthlySummarySending": "Sending...",
             "sendMonthlySummarySent": "Monthly summary sent",
             "sendMonthlySummaryNoData": "No payments found for this month",
-            "serverTimeHint": "Reminders are sent based on server time (UTC). Current server time: {time}.",
+            "digestToggle": "Weekly due overview",
+            "digestHint": "A weekly list of overdue and upcoming bills, sent on the day and time you pick (your timezone).",
+            "digestWeekdayLabel": "Digest day",
+            "digestTimeLabel": "Digest time",
+            "digestDaysLabel": "days ahead",
+            "serverTimeHint": "Notification times use your timezone (set it under Account; UTC until then). Current server time: {time}.",
             "channelsLabel": "Delivery channels",
             "smtpChannel": "Email (SMTP, optional)",
             "appriseChannel": "Apprise",

@@ -28,7 +28,7 @@ test('calendar view shows instance chips and the selected-day rows keep actions'
   await syncPaymentsViaApi(page);
 
   await page.goto('/dashboard/payments');
-  await expect(page.getByText(billName)).toBeVisible();
+  await expect(page.getByText(billName).first()).toBeVisible();
 
   // Step: switch to the calendar view
   await page.getByRole('button', { name: 'Calendar' }).click();
@@ -36,7 +36,7 @@ test('calendar view shows instance chips and the selected-day rows keep actions'
   // Assert: the chip for this month's instance renders with its amount
   const grid = page.getByTestId('payment-calendar-grid');
   await expect(grid).toBeVisible();
-  await expect(grid.getByText(billName)).toContainText(BILL_AMOUNT);
+  await expect(grid.getByText(billName).first()).toContainText(BILL_AMOUNT);
 
   // Step: select the due day
   const now = new Date();
@@ -45,13 +45,15 @@ test('calendar view shows instance chips and the selected-day rows keep actions'
 
   // Assert: the selected-day panel renders the existing PaymentRow actions
   const panel = page.getByTestId('calendar-selected-day');
-  await expect(panel.getByText(billName)).toBeVisible();
+  await expect(panel.getByText(billName).first()).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Mark as Paid' })).toBeVisible();
 
   // Step: back to the list view — the row and its action are still there
   await page.getByRole('button', { name: 'List' }).click();
-  await expect(page.getByText(billName)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Mark as Paid' })).toBeVisible();
+  await expect(page.getByText(billName).first()).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Mark as Paid' }).first(),
+  ).toBeVisible();
 });
 
 test('filters narrow the payments list and clearing restores it', async ({ page }) => {
@@ -66,26 +68,26 @@ test('filters narrow the payments list and clearing restores it', async ({ page 
   await syncPaymentsViaApi(page);
 
   await page.goto('/dashboard/payments');
-  await expect(page.getByText(alpha)).toBeVisible();
-  await expect(page.getByText(beta)).toBeVisible();
+  await expect(page.getByText(alpha).first()).toBeVisible();
+  await expect(page.getByText(beta).first()).toBeVisible();
 
   const filters = page.getByTestId('payment-filters');
 
   // Step: search narrows the list to one bill
   await filters.getByLabel('Search').fill('Alpha');
-  await expect(page.getByText(alpha)).toBeVisible();
-  await expect(page.getByText(beta)).not.toBeVisible();
+  await expect(page.getByText(alpha).first()).toBeVisible();
+  await expect(page.getByText(beta).first()).not.toBeVisible();
 
   // Step: category filter narrows to the housing bill
   await filters.getByLabel('Search').fill('');
   await filters.getByLabel('Category').selectOption('housing');
-  await expect(page.getByText(beta)).toBeVisible();
-  await expect(page.getByText(alpha)).not.toBeVisible();
+  await expect(page.getByText(beta).first()).toBeVisible();
+  await expect(page.getByText(alpha).first()).not.toBeVisible();
 
   // Step: clearing filters restores both bills
   await filters.getByRole('button', { name: 'Clear filters' }).click();
-  await expect(page.getByText(alpha)).toBeVisible();
-  await expect(page.getByText(beta)).toBeVisible();
+  await expect(page.getByText(alpha).first()).toBeVisible();
+  await expect(page.getByText(beta).first()).toBeVisible();
 
   // Assert: a search with no hits shows the distinct "no matches" state,
   // and its action restores the list
@@ -95,6 +97,6 @@ test('filters narrow the payments list and clearing restores it', async ({ page 
     .getByTestId('payment-no-matches')
     .getByRole('button', { name: 'Clear filters' })
     .click();
-  await expect(page.getByText(alpha)).toBeVisible();
-  await expect(page.getByText(beta)).toBeVisible();
+  await expect(page.getByText(alpha).first()).toBeVisible();
+  await expect(page.getByText(beta).first()).toBeVisible();
 });

@@ -248,7 +248,7 @@ export default function BillTemplateForm({
             : parseMaxOccurrences(maxOccurrences),
         start_date: isWeekly ? startDate : null,
         amount: amount.trim() || "0",
-        amount_varies: amountVaries,
+        amount_varies: frequency === "one_off" ? false : amountVaries,
         currency: resolvedCurrency || "EUR",
         due_day: isWeekly || !dueDay ? null : parseInt(dueDay, 10),
         due_month: isWeekly || !dueMonth ? null : parseInt(dueMonth, 10),
@@ -461,23 +461,27 @@ export default function BillTemplateForm({
         </div>
       </div>
 
-      {/* Amount-varies toggle. The hint sits outside the label so the
-          checkbox's accessible name stays short ("Usage-based bill") and
-          doesn't collide with the Amount field's label. */}
-      <div>
-        <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">
-          <input
-            type="checkbox"
-            checked={amountVaries}
-            onChange={(e) => setAmountVaries(e.target.checked)}
-            className="h-4 w-4 rounded accent-blue-700"
-          />
-          {t("amountVariesLabel")}
-        </label>
-        <p className="ml-6.5 mt-1 text-xs text-slate-400 dark:text-slate-500">
-          {t("amountVariesHint")}
-        </p>
-      </div>
+      {/* Amount-varies toggle. One-off bills are single known charges, so
+          the toggle is hidden for them (and the payload forces it off).
+          The hint sits outside the label so the checkbox's accessible name
+          stays short ("Usage-based bill") and doesn't collide with the
+          Amount field's label. */}
+      {frequency !== "one_off" && (
+        <div>
+          <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">
+            <input
+              type="checkbox"
+              checked={amountVaries}
+              onChange={(e) => setAmountVaries(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-700"
+            />
+            {t("amountVariesLabel")}
+          </label>
+          <p className="ml-6.5 mt-1 text-xs text-slate-400 dark:text-slate-500">
+            {t("amountVariesHint")}
+          </p>
+        </div>
+      )}
 
       {/* Paused toggle */}
       <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-400">

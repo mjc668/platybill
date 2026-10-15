@@ -52,7 +52,8 @@ def _new_instance_values(db: Session, template: BillTemplate) -> dict[str, objec
     Variable-amount templates get a suggested amount flagged as estimated;
     fixed templates use the template amount.
     """
-    if template.amount_varies:
+    # One-off bills are single known charges: never estimated.
+    if template.amount_varies and template.frequency != BillFrequency.one_off:
         return {"amount": suggested_amount(db, template), "amount_estimated": True}
     return {"amount": template.amount}
 
@@ -330,13 +331,15 @@ def generate_future_instances(
     user_id: int,
     months: int,
     bill_ids: list[int] | None = None,
+    today: date | None = None,
 ) -> tuple[int, int]:
-    """Generate instances for current UTC month+1 through +months inclusive.
+    """Generate instances for the user's current month+1 through +months.
 
     Returns `(created, template_count)`; creation is idempotent via the
     `(bill_id, due_date)` uniqueness check in `backfill_template_instances`.
+    `today` defaults to the server's date for callers without user context.
     """
-    current = datetime.now(timezone.utc).strftime("%Y-%m")
+    current = (today or date.today()).strftime("%Y-%m")
     from_period = _add_months(current, 1)
     to_period = _add_months(current, months)
 

@@ -18,15 +18,22 @@ test('deleted payment row disappears from the payments list', async ({ page }) =
 
   // Step: navigate to payments page
   await page.goto('/dashboard/payments');
-  await expect(page.getByText(billName)).toBeVisible();
+  const row = page.getByTestId('payment-row').filter({ hasText: billName }).first();
+  await expect(row).toBeVisible();
 
-  // Step: click "Delete payment" (only one row → no ambiguity)
-  await page.getByLabel('Delete payment').click();
+  // Step: delete this month's row — and its future siblings, so the state is
+  // deterministic even when the next occurrence is inside the due-soon window.
+  await row.getByLabel('Delete payment').click();
 
-  // DeletePaymentDialog appears — confirm
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
+  await dialog
+    .getByLabel('Also delete all future unpaid entries for this bill')
+    .check();
   await dialog.getByRole('button', { name: 'Delete' }).click();
+
+  // Reload so the client state reflects the future rows tombstoned above.
+  await page.reload();
 
   // Assert: the payment row is gone (exact: true avoids matching parent containers
   // whose combined text content includes billName + other text like frequency)

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import current_user
+from app.core.timezones import user_today
 from app.models.user import User
 from app.schemas.stats import StatsOverviewOut
 from app.services.stats import build_stats_overview
@@ -20,7 +21,7 @@ def stats_overview(
     me: User = Depends(current_user),
 ):
     """Read-only dashboard stats for the user's primary currency."""
-    today = date.today()
+    today = user_today(me.timezone)
     target = month if month is not None else today.strftime("%Y-%m")
     # The pattern above still admits year 0000, whose month arithmetic in the
     # forecast produces negative years; reject it explicitly.

@@ -518,6 +518,181 @@ def send_monthly_summary_email(
         smtp.send_message(msg)
 
 
+_DIGEST_SUBJECTS: dict[str, str] = {
+    "en": "Due in the next {days} days — Platybill",
+    "pl": "Terminy na najbliższe {days} dni — Platybill",
+    "de": "Fällig in den nächsten {days} Tagen — Platybill",
+}
+
+_DIGEST_HEADINGS: dict[str, dict[str, str]] = {
+    "en": {
+        "intro": "Here is what is due over the next {days} days.",
+        "overdue_header": "Overdue",
+        "upcoming_header": "Due soon",
+        "nothing": "Nothing is due — all clear!",
+        "total": "Total due",
+        "footer": "Manage your bills in the Platybill app.",
+    },
+    "pl": {
+        "intro": "Oto co jest do zapłaty w ciągu najbliższych {days} dni.",
+        "overdue_header": "Zaległe",
+        "upcoming_header": "Wkrótce",
+        "nothing": "Nic nie jest do zapłaty — wszystko na bieżąco!",
+        "total": "Łącznie do zapłaty",
+        "footer": "Zarządzaj rachunkami w aplikacji Platybill.",
+    },
+    "de": {
+        "intro": "Das ist in den nächsten {days} Tagen fällig.",
+        "overdue_header": "Überfällig",
+        "upcoming_header": "Demnächst fällig",
+        "nothing": "Nichts ist fällig — alles erledigt!",
+        "total": "Gesamt fällig",
+        "footer": "Verwalten Sie Ihre Rechnungen in der Platybill App.",
+    },
+}
+
+
+def _digest_totals(rows: list[dict[str, Any]]) -> list[tuple[str, Decimal]]:
+    """Per-currency totals for the digest body (handles mixed currencies)."""
+    totals: dict[str, Decimal] = {}
+    for row in rows:
+        currency = str(row["currency"])
+        totals[currency] = totals.get(currency, Decimal(0)) + Decimal(
+            str(row["amount"])
+        )
+    return sorted(totals.items())
+
+
+def _digest_row_text(row: dict[str, Any]) -> str:
+    amount = Decimal(str(row["amount"]))
+    return f"  {row['name']} | {row['due_date']} | {amount:.2f} {row['currency']}"
+
+
+def _build_digest_plaintext(
+    days: int,
+    overdue_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    lang: str,
+) -> str:
+    h = _DIGEST_HEADINGS.get(lang, _DIGEST_HEADINGS["en"])
+    lines = [h["intro"].format(days=days), ""]
+    if overdue_rows:
+        lines.append(f"=== {h['overdue_header']} ===")
+        lines.extend(_digest_row_text(row) for row in overdue_rows)
+        lines.append("")
+    lines.append(f"=== {h['upcoming_header']} ===")
+    if upcoming_rows:
+        lines.extend(_digest_row_text(row) for row in upcoming_rows)
+    else:
+        lines.append(f"  {h['nothing']}")
+    totals = _digest_totals(overdue_rows + upcoming_rows)
+    if totals:
+        lines += [
+            "",
+            f"{h['total']}: "
+            + " / ".join(f"{amount:.2f} {currency}" for currency, amount in totals),
+        ]
+    lines += ["", h["footer"]]
+    return "\n".join(lines)
+
+
+def _build_digest_html(
+    days: int,
+    overdue_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    lang: str,
+) -> str:
+    h = _DIGEST_HEADINGS.get(lang, _DIGEST_HEADINGS["en"])
+    cell = 'style="padding:6px 12px;border-bottom:1px solid #e2e8f0"'
+
+    def row_html(row: dict[str, Any], color: str) -> str:
+        amount = (
+            f"{Decimal(str(row['amount'])):.2f} {html.escape(str(row['currency']))}"
+        )
+        return (
+            f"<tr>"
+            f"<td {cell}>{html.escape(row['name'])}</td>"
+            f"<td {cell}>{html.escape(str(row['due_date']))}</td>"
+            f'<td {cell} style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:{color}">{amount}</td>'
+            f"</tr>"
+        )
+
+    sections = [f"<p>{html.escape(h['intro'].format(days=days))}</p>"]
+    if overdue_rows:
+        sections.append(f'<h3 style="margin:18px 0 6px">{h["overdue_header"]}</h3>')
+        sections.append("<table style='border-collapse:collapse;width:100%'>")
+        sections.extend(row_html(row, "#dc2626") for row in overdue_rows)
+        sections.append("</table>")
+    sections.append(f'<h3 style="margin:18px 0 6px">{h["upcoming_header"]}</h3>')
+    sections.append("<table style='border-collapse:collapse;width:100%'>")
+    if upcoming_rows:
+        sections.extend(row_html(row, "#0f172a") for row in upcoming_rows)
+    else:
+        sections.append(
+            f'<tr><td colspan="3" style="padding:10px 12px;color:#16a34a;'
+            f'font-style:italic">{h["nothing"]}</td></tr>'
+        )
+    sections.append("</table>")
+    totals = _digest_totals(overdue_rows + upcoming_rows)
+    if totals:
+        totals_label = " / ".join(
+            f"{amount:.2f} {html.escape(currency)}" for currency, amount in totals
+        )
+        sections.append(
+            f'<p style="margin-top:14px;font-weight:bold">{h["total"]}: {totals_label}</p>'
+        )
+    sections.append(f'<p style="color:#64748b;font-size:12px">{h["footer"]}</p>')
+    return "".join(sections)
+
+
+def build_upcoming_digest_text(
+    *,
+    days: int,
+    overdue_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    language: str,
+) -> tuple[str, str]:
+    """Return a localized (title, body) compact plain-text dues digest."""
+    lang = language if language in _DIGEST_SUBJECTS else "en"
+    title = _DIGEST_SUBJECTS[lang].format(days=days)
+    body = _build_digest_plaintext(days, overdue_rows, upcoming_rows, lang)
+    return title, body
+
+
+def send_upcoming_digest_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str | None,
+    smtp_password: str | None,
+    smtp_use_tls: bool = True,
+    from_addr: str = "",
+    to_addr: str,
+    days: int,
+    overdue_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    language: str,
+) -> None:
+    lang = language if language in _DIGEST_SUBJECTS else "en"
+    subject = _DIGEST_SUBJECTS[lang].format(days=days)
+    plain = _build_digest_plaintext(days, overdue_rows, upcoming_rows, lang)
+    html_body = _build_digest_html(days, overdue_rows, upcoming_rows, lang)
+
+    msg = EmailMessage()
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg.set_content(plain)
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(smtp_host, smtp_port) as smtp:
+        if smtp_use_tls:
+            smtp.starttls()
+        if smtp_user:
+            smtp.login(smtp_user, smtp_password or "")
+        smtp.send_message(msg)
+
+
 _TEST_SUBJECTS: dict[str, str] = {
     "en": "Platybill test notification",
     "pl": "Powiadomienie testowe Platybill",

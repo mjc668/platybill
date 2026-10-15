@@ -1,5 +1,14 @@
 """Test fixtures: temporary SQLite database + FastAPI TestClient."""
 
+# The app resolves the current date as UTC for users without a timezone.
+# Pin the process timezone to UTC so `date.today()` (server-local) matches,
+# regardless of the developer machine's timezone.
+import os
+import time
+
+os.environ["TZ"] = "UTC"
+time.tzset()
+
 # Import models before app to (a) register them in Base.metadata for create_all
 # and (b) avoid shadowing the `app` FastAPI instance with the `app` package name.
 import app.models.bill  # noqa: F401

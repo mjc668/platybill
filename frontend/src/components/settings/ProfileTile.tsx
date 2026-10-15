@@ -1,7 +1,7 @@
 "use client";
 
 import { User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   changeEmail,
@@ -12,6 +12,27 @@ import {
 import { Tile } from "./Tile";
 
 const CURRENCY_PRESETS = ["PLN", "EUR", "USD", "AUD"] as const;
+
+function timezoneOptions(): string[] {
+  const intl = Intl as unknown as {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  try {
+    const values = intl.supportedValuesOf?.("timeZone");
+    if (values && values.length > 0) return values;
+  } catch {
+    // Older browsers: fall through to a short curated list.
+  }
+  return [
+    "UTC",
+    "Australia/Sydney",
+    "Europe/London",
+    "Europe/Warsaw",
+    "Europe/Berlin",
+    "America/New_York",
+    "America/Los_Angeles",
+  ];
+}
 
 type CurrencyChoice = (typeof CURRENCY_PRESETS)[number] | "custom" | "none";
 
@@ -68,6 +89,17 @@ export function ProfileTile({
   const [currencyError, setCurrencyError] = useState<string | null>(null);
   const [isCurrencySaving, setIsCurrencySaving] = useState(false);
 
+  const [timezone, setTimezone] = useState(profile.timezone ?? "");
+  const [timezoneError, setTimezoneError] = useState<string | null>(null);
+  const [isTimezoneSaving, setIsTimezoneSaving] = useState(false);
+  const tzOptions = useMemo(() => {
+    const base = timezoneOptions();
+    if (profile.timezone && !base.includes(profile.timezone)) {
+      return [profile.timezone, ...base];
+    }
+    return base;
+  }, [profile.timezone]);
+
   const resolvedCurrency =
     currencyChoice === "none"
       ? ""
@@ -78,7 +110,8 @@ export function ProfileTile({
 
   const isEmailDirty = emailInput.length > 0 || emailPassword.length > 0;
   const isPasswordDirty = curPassword.length > 0 || newPassword.length > 0;
-  const isDirty = isEmailDirty || isPasswordDirty || isCurrencyDirty;
+  const isTimezoneDirty = timezone !== (profile.timezone ?? "");
+  const isDirty = isEmailDirty || isPasswordDirty || isCurrencyDirty || isTimezoneDirty;
 
   useEffect(() => {
     onDirtyChange(isDirty);
@@ -152,6 +185,20 @@ export function ProfileTile({
       setCurrencyError(tp("profile.defaultCurrencySaveFailed"));
     } finally {
       setIsCurrencySaving(false);
+    }
+  }
+
+  async function saveTimezone() {
+    setTimezoneError(null);
+    setIsTimezoneSaving(true);
+    try {
+      const updated = await updateMe({ timezone: timezone || null });
+      onProfileUpdate(updated);
+      setTimezone(updated.timezone ?? "");
+    } catch {
+      setTimezoneError(tp("profile.timezoneSaveFailed"));
+    } finally {
+      setIsTimezoneSaving(false);
     }
   }
 
@@ -297,6 +344,54 @@ export function ProfileTile({
               {isCurrencySaving ? tp("saving") : tp("save")}
             </button>
             <button onClick={cancelCurrency} disabled={isCurrencySaving} className={btnCancel}>
+              {tp("cancel")}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <hr className="border-slate-200 dark:border-slate-700" />
+
+      <div className="space-y-2">
+        <label
+          htmlFor="timezone"
+          className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+        >
+          {tp("profile.timezoneLabel")}
+        </label>
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          {tp("profile.timezoneHint")}
+        </p>
+        <select
+          id="timezone"
+          value={timezone}
+          onChange={(e) => setTimezone(e.target.value)}
+          disabled={isTimezoneSaving}
+          className={inputClass}
+        >
+          <option value="">{tp("profile.timezoneDefault")}</option>
+          {tzOptions.map((tz) => (
+            <option key={tz} value={tz}>
+              {tz}
+            </option>
+          ))}
+        </select>
+        {timezoneError && (
+          <p className="text-sm text-red-600 dark:text-red-400">{timezoneError}</p>
+        )}
+        {isTimezoneDirty && (
+          <div className="flex gap-2 pt-1">
+            <button onClick={saveTimezone} disabled={isTimezoneSaving} className={btnSave}>
+              {isTimezoneSaving ? tp("saving") : tp("save")}
+            </button>
+            <button
+              onClick={() => {
+                setTimezone(profile.timezone ?? "");
+                setTimezoneError(null);
+              }}
+              disabled={isTimezoneSaving}
+              className={btnCancel}
+            >
               {tp("cancel")}
             </button>
           </div>

@@ -21,6 +21,7 @@ from app.models.bill import (
 )
 from app.models.category import Category
 from app.models.payment import Payment
+from app.core.timezones import user_today
 from app.models.user import User
 from app.schemas.category import CategoryOut
 from app.schemas.stats import (
@@ -454,7 +455,7 @@ def _overdue_summary(
 def build_stats_overview(
     db: Session, user: User, month: str, months: int
 ) -> StatsOverviewOut:
-    today = date.today()
+    today = user_today(user.timezone)
     currency, other_currencies = _primary_currency(db, user.id)
     periods = _trend_periods(month, months)
 
