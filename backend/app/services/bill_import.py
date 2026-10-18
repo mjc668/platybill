@@ -360,7 +360,8 @@ def poll_directory(db: Session) -> dict[str, Any]:
         if not path.is_file() or path.suffix.lower() not in ALLOWED_SUFFIXES:
             continue
         try:
-            if root_resolved not in path.resolve().parents and path.resolve() != root_resolved:
+            resolved = path.resolve()
+            if root_resolved not in resolved.parents and resolved != root_resolved:
                 continue
         except OSError:
             continue

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import socket
 from pathlib import Path
+import socket
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
