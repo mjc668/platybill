@@ -88,19 +88,6 @@ export function proxy(request: NextRequest) {
   const nowSec = Math.floor(Date.now() / 1000);
   const tokenAlive = token !== undefined && (readTokenExp(token) ?? 0) > nowSec;
 
-  // API traffic is proxied straight to the backend; inject the client IP as
-  // seen by Next so uvicorn can rate-limit per real client instead of the
-  // loopback peer.
-  if (pathname.startsWith("/api/")) {
-    const requestHeaders = new Headers(request.headers);
-    if (request.ip) requestHeaders.set("x-real-ip", request.ip);
-    const res = applySecurityHeaders(
-      NextResponse.next({ request: { headers: requestHeaders } }),
-      headers,
-    );
-    return res;
-  }
-
   if (!tokenAlive && !isPublicRoute) {
     if (!NAVIGATION_METHODS.has(method)) {
       // Not a navigation — fail it cleanly so it is never redirected onto
@@ -169,8 +156,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // /api/* now passes through the proxy so the client IP can be injected
-    // as X-Real-IP; auth/CSP redirects are skipped for it (see above).
-    "/((?!_next/static|_next/image|favicon.ico|manifest\\.webmanifest$|sw\\.js$|icon-(?:192|512)\\.png$|platybill-logo(?:-light)?\\.(?:png|svg)$).*)",
+    // /api/* is handled by the next.config rewrite (proxied straight to the
+    // backend), so it must bypass the auth/CSP proxy entirely.
+    "/((?!api/|_next/static|_next/image|favicon.ico|manifest\\.webmanifest$|sw\\.js$|icon-(?:192|512)\\.png$|platybill-logo(?:-light)?\\.(?:png|svg)$).*)",
   ],
 };
