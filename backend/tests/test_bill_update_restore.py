@@ -226,7 +226,7 @@ def test_patch_restore_recalculates_due_date(client_db):
     bill_id = _create_bill(client, token)  # due_day=15
     period = _current_period()
     year, month = map(int, period.split("-"))
-    inst = _insert_instance(db, bill_id, period, date(year, month, 15), is_deleted=True)
+    inst = _insert_instance(db, bill_id, period, date(year, month, 28), is_deleted=True)
 
     r = client.patch(
         f"/bills/{bill_id}",
