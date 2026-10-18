@@ -353,8 +353,16 @@ def poll_directory(db: Session) -> dict[str, Any]:
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     processed = duplicates = failed = 0
+    root_resolved = root.resolve()
     for path in sorted(root.iterdir()):
+        if path.is_symlink():
+            continue
         if not path.is_file() or path.suffix.lower() not in ALLOWED_SUFFIXES:
+            continue
+        try:
+            if root_resolved not in path.resolve().parents and path.resolve() != root_resolved:
+                continue
+        except OSError:
             continue
         try:
             data = path.read_bytes()

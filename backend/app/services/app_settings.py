@@ -6,8 +6,11 @@ stored in `app_settings` falls back to the env-backed Settings object.
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -113,4 +116,53 @@ def ollama_config(db: Session) -> OllamaConfig | None:
 def validate_ollama_url(url: str) -> str | None:
     if not url.startswith(("http://", "https://")):
         return "URL must start with http:// or https://"
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return "URL must include a host"
+    if parsed.username or parsed.password:
+        return "URL must not include credentials"
+    lowered = host.lower()
+    if lowered in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",
+        "169.254.169.254",
+        "metadata.google.internal",
+    }:
+        return "URL host is not allowed"
+    try:
+        ip = ipaddress.ip_address(host)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return "URL host is not allowed"
+    except ValueError:
+        pass
+    # Best-effort DNS check: block hostnames that resolve to private ranges.
+    # Unresolvable hosts are allowed (e.g. docker service names in tests).
+    try:
+        for info in socket.getaddrinfo(host, None):
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return "URL host is not allowed"
+    except socket.gaierror:
+        pass
     return None

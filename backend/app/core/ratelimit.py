@@ -65,6 +65,14 @@ def client_ip(request: Request) -> str:
             # client. Leftmost entries are attacker-controlled and must not be
             # trusted for rate-limit keys.
             return forwarded.split(",")[-1].strip()
+    # When running behind the built-in Next proxy (127.0.0.1), trust the
+    # X-Real-IP header it injects from its own view of the client. Only the
+    # loopback peer can reach uvicorn in the container, so this cannot be
+    # spoofed by external clients.
+    if request.client is not None and request.client.host in {"127.0.0.1", "::1"}:
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            return real_ip.strip()
     return request.client.host if request.client else "unknown"
 
 

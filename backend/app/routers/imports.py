@@ -28,6 +28,7 @@ from app.services.bill_import import (
     import_document,
     poll_directory,
     poll_email,
+    resolve_import_user,
 )
 
 router = APIRouter(prefix="/import", tags=["import"])
@@ -244,6 +245,14 @@ def update_import_settings(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
+    # Import settings are process-wide: only the account that polled imports
+    # target (or the sole account) may change them.
+    target = resolve_import_user(db)
+    if target is not None and target.id != me.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the import target account can change import settings",
+        )
     if body.directory is not None:
         error = app_settings.validate_import_dir(body.directory)
         if error:
