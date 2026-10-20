@@ -70,6 +70,10 @@ interface Props {
   onCategoryCreated: (category: Category) => void;
   /** Non-archived bank accounts offered by the picker. */
   bankAccounts: BankAccount[];
+  /** Currency preselected for new bills when the profile defines one. */
+  defaultCurrency?: string;
+  onSave: (data: BillTemplateCreate) => Promise<void>;
+  onCancel: () => void;
 }
 
 interface Errors {

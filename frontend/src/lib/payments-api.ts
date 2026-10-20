@@ -33,6 +33,7 @@ export interface PaymentInstanceOut {
   start_date: string | null;
   category: Category;
   preferred_account: BankAccount | null;
+  email_sent_at: string | null;
   payments: PaymentEvent[];
 }
 

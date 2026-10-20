@@ -163,7 +163,9 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
                 "id": t.id,
                 "name": t.name,
                 "category": t.category.key or t.category.name,
-                "bank_account": t.preferred_account.name if t.preferred_account else None,
+                "bank_account": (
+                    t.preferred_account.name if t.preferred_account else None
+                ),
                 "frequency": t.frequency,
                 "interval_count": t.interval_count,
                 "max_occurrences": t.max_occurrences,

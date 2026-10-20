@@ -14,6 +14,7 @@ import { EmailNotificationsTile } from "@/components/settings/EmailNotifications
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
 import { CategoriesTile } from "@/components/settings/CategoriesTile";
 import { BankAccountsTile } from "@/components/settings/BankAccountsTile";
+import { BillImportTile } from "@/components/settings/BillImportTile";
 import { UnsavedChangesDialog } from "@/components/settings/UnsavedChangesDialog";
 
 const TABS = ["account", "notifications", "bills", "data"] as const;

@@ -735,7 +735,9 @@ def update_bill(
                     db, me.id, account_id, allow_archived=True
                 ).id
             except BankAccountError as exc:
-                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+                raise HTTPException(
+                    status_code=exc.status_code, detail=str(exc)
+                ) from exc
 
     due_day_changed = "due_day" in updates and updates["due_day"] != bill.due_day
     for field, value in updates.items():

@@ -12,6 +12,7 @@ import {
 } from "@/lib/bills-api";
 import { fetchCategories, categoryLabel, type Category } from "@/lib/categories-api";
 import { bankAccountLabel } from "@/lib/bank-accounts-api";
+import { sortCategories } from "@/lib/categories";
 import { SessionExpiredError } from "@/lib/api";
 import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
 import DeleteBillDialog from "@/components/bills/DeleteBillDialog";

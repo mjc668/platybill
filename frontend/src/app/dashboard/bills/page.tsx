@@ -28,6 +28,7 @@ import {
 import { fetchCategories, categoryLabel, type Category } from "@/lib/categories-api";
 import { fetchBankAccounts, type BankAccount } from "@/lib/bank-accounts-api";
 import { categoryColor, categoryValue, sortCategories } from "@/lib/categories";
+import { fetchMe, type UserProfile } from "@/lib/user-api";
 import { SessionExpiredError } from "@/lib/api";
 import BillTemplateForm from "@/components/bills/BillTemplateForm";
 import ReviewInbox from "@/components/payments/ReviewInbox";
@@ -58,6 +59,7 @@ export default function BillsPage() {
   const [templates, setTemplates] = useState<BillTemplateOut[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [expandedId, setExpandedId] = useState<number | "new" | null>(null);

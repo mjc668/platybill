@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { TileTranslator } from "./Tile";
 
 export function UnsavedChangesDialog({
+  onLeave,
   onStay,
   t,
 }: {

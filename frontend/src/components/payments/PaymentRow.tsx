@@ -7,7 +7,7 @@ import type { PaymentInstanceOut } from "@/lib/payments-api";
 import { deletePaymentEvent, revertPay } from "@/lib/payments-api";
 import { bankAccountLabel } from "@/lib/bank-accounts-api";
 import { categoryLabel } from "@/lib/categories-api";
-
+import EditAmountDialog from "@/components/payments/EditAmountDialog";
 export const STATUS_STYLES: Record<string, string> = {
   upcoming:
     "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
