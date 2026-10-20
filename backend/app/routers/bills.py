@@ -740,8 +740,39 @@ def update_bill(
                 ) from exc
 
     due_day_changed = "due_day" in updates and updates["due_day"] != bill.due_day
+    amount_changed = "amount" in updates and updates["amount"] != bill.amount
     for field, value in updates.items():
         setattr(bill, field, value)
+
+    if amount_changed and not bill.amount_varies:
+        # A price change follows live rows: unpaid, event-free instances pick
+        # up the new template amount. Rows with payment events (partial or
+        # full) and deleted rows are history and stay frozen.
+        live = (
+            db.query(PaymentInstance)
+            .filter(
+                PaymentInstance.bill_id == bill.id,
+                PaymentInstance.status != PaymentStatus.paid,
+                PaymentInstance.is_deleted.is_(False),
+            )
+            .all()
+        )
+        with_events = (
+            {
+                row[0]
+                for row in db.query(Payment.instance_id)
+                .filter(Payment.instance_id.in_([inst.id for inst in live]))
+                .all()
+            }
+            if live
+            else set()
+        )
+        for inst in live:
+            if inst.id in with_events:
+                continue
+            inst.amount = bill.amount
+            inst.amount_estimated = False
+            recalculate_instance(inst, today=user_today(me.timezone))
 
     # Recalculate start_period when due_month changes for annual/one_off
     if due_month is not None and effective_frequency in (BF.annual, BF.one_off):

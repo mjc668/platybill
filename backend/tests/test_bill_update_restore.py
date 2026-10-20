@@ -654,3 +654,58 @@ def test_patch_max_occurrences_at_bounds_accepted(client_db, value):
     )
     assert r.status_code == 200, r.text
     assert r.json()["max_occurrences"] == value
+
+
+def test_patch_amount_propagates_to_live_instances(client_db):
+    """A price change follows unpaid event-free instances; history stays frozen."""
+    from app.models.payment import Payment
+
+    client, db = client_db
+    token = register_and_login(client, "amt_live@test.com")
+    bill_id = _create_bill(client, token)  # 120.00
+    period = _current_period()
+    today = date.today()
+
+    live = _insert_instance(db, bill_id, period, today, amount="120.00")
+    paid = _insert_instance(
+        db,
+        bill_id,
+        period,
+        today - timedelta(days=1),
+        status=PaymentStatus.paid,
+        amount="120.00",
+    )
+    db.add(Payment(instance_id=paid.id, amount="120.00", paid_on=today))
+    db.commit()
+
+    r = client.patch(
+        f"/bills/{bill_id}", json={"amount": "150.00"}, headers=auth(token)
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert float(db.get(PaymentInstance, live.id).amount) == pytest.approx(150.00)
+    assert float(db.get(PaymentInstance, paid.id).amount) == pytest.approx(120.00)
+
+
+def test_patch_amount_skips_instances_with_partial_events(client_db):
+    """Partially-paid rows keep their amount: the ledger already references it."""
+    from app.models.payment import Payment
+
+    client, db = client_db
+    token = register_and_login(client, "amt_partial@test.com")
+    bill_id = _create_bill(client, token)
+    period = _current_period()
+    today = date.today()
+
+    partial = _insert_instance(db, bill_id, period, today, amount="120.00")
+    db.add(Payment(instance_id=partial.id, amount="50.00", paid_on=today))
+    db.commit()
+
+    r = client.patch(
+        f"/bills/{bill_id}", json={"amount": "150.00"}, headers=auth(token)
+    )
+    assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert float(db.get(PaymentInstance, partial.id).amount) == pytest.approx(120.00)
