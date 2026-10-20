@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from "next-intl";
 import CategoryCombobox from "./CategoryCombobox";
 import MonthDayCalendar from "./MonthDayCalendar";
 import type { Category } from "@/lib/categories-api";
+import type { BankAccount } from "@/lib/bank-accounts-api";
 import {
   normalizeBillFrequency,
   type BillFrequency,
@@ -62,13 +63,13 @@ interface Props {
   initial?: Partial<BillTemplateCreate>;
   /** Category of the edited bill — may be archived and absent from `categories`. */
   initialCategory?: Category;
+  /** Account of the edited bill — may be archived and absent from `bankAccounts`. */
+  initialAccount?: BankAccount | null;
   /** Non-archived categories offered by the picker. */
   categories: Category[];
   onCategoryCreated: (category: Category) => void;
-  /** Currency preselected for new bills when the profile defines one. */
-  defaultCurrency?: string;
-  onSave: (data: BillTemplateCreate) => Promise<void>;
-  onCancel: () => void;
+  /** Non-archived bank accounts offered by the picker. */
+  bankAccounts: BankAccount[];
 }
 
 interface Errors {
@@ -87,8 +88,10 @@ const labelClass = "block text-xs font-semibold uppercase tracking-wide text-sla
 export default function BillTemplateForm({
   initial,
   initialCategory,
+  initialAccount,
   categories,
   onCategoryCreated,
+  bankAccounts,
   defaultCurrency,
   onSave,
   onCancel,
@@ -99,6 +102,11 @@ export default function BillTemplateForm({
   const [category, setCategory] = useState<Category | null>(
     initialCategory ??
       categories.find((c) => c.id === initial?.category_id) ??
+      null,
+  );
+  const [account, setAccount] = useState<BankAccount | null>(
+    initialAccount ??
+      bankAccounts.find((a) => a.id === initial?.preferred_account_id) ??
       null,
   );
   const [frequency, setFrequency] = useState<BillFrequency>(
@@ -240,6 +248,7 @@ export default function BillTemplateForm({
       const payload: BillTemplateCreate = {
         name: name.trim(),
         category_id: category.id,
+        preferred_account_id: account?.id ?? null,
         frequency,
         interval_count: frequency === "one_off" ? 1 : intervalCount,
         max_occurrences:
@@ -449,16 +458,38 @@ export default function BillTemplateForm({
           {errors.category && <p className="mt-1 text-xs text-red-500">{errors.category}</p>}
         </div>
         <div>
-          <label htmlFor="bill-notes" className={labelClass}>{t("notesLabel")}</label>
-          <textarea
-            id="bill-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            placeholder={t("notesPlaceholder")}
-            className={inputClass + " resize-none"}
-          />
+          <label htmlFor="bill-account" className={labelClass}>{t("accountLabel")}</label>
+          <select
+            id="bill-account"
+            value={account?.id ?? ""}
+            onChange={(e) => {
+              const id = e.target.value === "" ? null : Number(e.target.value);
+              setAccount(bankAccounts.find((a) => a.id === id) ?? null);
+            }}
+            className={inputClass}
+          >
+            <option value="">{t("accountNone")}</option>
+            {initialAccount && !bankAccounts.some((a) => a.id === initialAccount.id) && (
+              <option value={initialAccount.id}>{initialAccount.name}</option>
+            )}
+            {bankAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
         </div>
+      </div>
+
+      {/* Row 5: Notes */}
+      <div>
+        <label htmlFor="bill-notes" className={labelClass}>{t("notesLabel")}</label>
+        <textarea
+          id="bill-notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={2}
+          placeholder={t("notesPlaceholder")}
+          className={inputClass + " resize-none"}
+        />
       </div>
 
       {/* Amount-varies toggle. One-off bills are single known charges, so

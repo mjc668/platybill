@@ -13,7 +13,7 @@ import { ProfileTile } from "@/components/settings/ProfileTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
 import { CategoriesTile } from "@/components/settings/CategoriesTile";
-import { BillImportTile } from "@/components/settings/BillImportTile";
+import { BankAccountsTile } from "@/components/settings/BankAccountsTile";
 import { UnsavedChangesDialog } from "@/components/settings/UnsavedChangesDialog";
 
 const TABS = ["account", "notifications", "bills", "data"] as const;
@@ -176,6 +176,8 @@ export default function SettingsPage() {
         className="space-y-4"
       >
         <CategoriesTile t={t} />
+
+        <BankAccountsTile t={t} />
 
         <BillImportTile t={t} />
       </div>

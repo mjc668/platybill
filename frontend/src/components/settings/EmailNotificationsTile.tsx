@@ -15,7 +15,7 @@ import {
   type UserProfile,
 } from "@/lib/user-api";
 import { Switch } from "@/components/ui/Switch";
-import { Tile } from "./Tile";
+import { Tile, type TileTranslator } from "./Tile";
 
 const SLOTS = Array.from({ length: 48 }, (_, i) => i * 30);
 function fmtSlot(minutes: number) {
@@ -35,7 +35,7 @@ export function EmailNotificationsTile({
   profile: UserProfile;
   onProfileUpdate: (p: UserProfile) => void;
   onDirtyChange: (dirty: boolean) => void;
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
   isCollapsed?: boolean;
   onToggle?: () => void;
 }) {

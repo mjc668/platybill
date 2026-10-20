@@ -1,7 +1,7 @@
 import { apiFetch } from "./api";
+import type { BankAccount } from "./bank-accounts-api";
 import type { BillFrequency } from "./bills-api";
 import type { Category } from "./categories-api";
-
 export type { BillFrequency };
 export type PaymentStatus = "upcoming" | "overdue" | "paid";
 
@@ -32,7 +32,7 @@ export interface PaymentInstanceOut {
   max_occurrences: number | null;
   start_date: string | null;
   category: Category;
-  email_sent_at: string | null;
+  preferred_account: BankAccount | null;
   payments: PaymentEvent[];
 }
 

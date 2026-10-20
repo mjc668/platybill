@@ -31,6 +31,9 @@ from app.schemas.bill import (
     ExportSummaryOut,
     RestoreSnapshotOut,
 )
+from app.services.bank_accounts import (
+    resolve_backup_value as resolve_account_backup_value,
+)
 from app.services.categories import category_label, resolve_backup_value
 
 router = APIRouter(prefix="/export", tags=["export"])
@@ -127,7 +130,10 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
     shared by GET /export/json and the pre-restore snapshot."""
     templates = (
         db.query(BillTemplate)
-        .options(selectinload(BillTemplate.category))
+        .options(
+            selectinload(BillTemplate.category),
+            selectinload(BillTemplate.preferred_account),
+        )
         .filter(BillTemplate.user_id == user_id)
         .all()
     )
@@ -157,6 +163,7 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
                 "id": t.id,
                 "name": t.name,
                 "category": t.category.key or t.category.name,
+                "bank_account": t.preferred_account.name if t.preferred_account else None,
                 "frequency": t.frequency,
                 "interval_count": t.interval_count,
                 "max_occurrences": t.max_occurrences,
@@ -304,6 +311,7 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
 
     id_map: dict[int, int] = {}
     category_ids: dict[str | None, int] = {}
+    account_ids: dict[str | None, int | None] = {}
     for bt in backup.bill_templates:
         if bt.category not in category_ids:
             # Resolve per distinct value, case-insensitively; never deletes
@@ -311,9 +319,13 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
             category_ids[bt.category] = resolve_backup_value(
                 db, user_id, bt.category
             ).id
+        if bt.bank_account not in account_ids:
+            account = resolve_account_backup_value(db, user_id, bt.bank_account)
+            account_ids[bt.bank_account] = account.id if account else None
         template_obj = BillTemplate(
             name=bt.name,
             category_id=category_ids[bt.category],
+            preferred_account_id=account_ids[bt.bank_account],
             frequency=BillFrequency(bt.frequency),
             interval_count=bt.interval_count,
             max_occurrences=bt.max_occurrences,

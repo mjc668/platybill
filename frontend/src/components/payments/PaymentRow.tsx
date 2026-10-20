@@ -5,8 +5,8 @@ import { AlertCircle, AtSign, CheckCircle, Loader2, MessageSquare, Pencil, Rotat
 import { useTranslations, useLocale } from "next-intl";
 import type { PaymentInstanceOut } from "@/lib/payments-api";
 import { deletePaymentEvent, revertPay } from "@/lib/payments-api";
+import { bankAccountLabel } from "@/lib/bank-accounts-api";
 import { categoryLabel } from "@/lib/categories-api";
-import EditAmountDialog from "@/components/payments/EditAmountDialog";
 
 export const STATUS_STYLES: Record<string, string> = {
   upcoming:
@@ -158,6 +158,11 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
           <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
             {categoryLabel(instance.category, tRoot)}
           </span>
+          {instance.preferred_account && (
+            <span className="shrink-0 truncate max-w-32 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              {bankAccountLabel(instance.preferred_account)}
+            </span>
+          )}
         </div>
         {/* Amount */}
         {parseFloat(instance.amount) > 0 && (

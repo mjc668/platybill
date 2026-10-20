@@ -12,6 +12,7 @@ time.tzset()
 # Import models before app to (a) register them in Base.metadata for create_all
 # and (b) avoid shadowing the `app` FastAPI instance with the `app` package name.
 import app.models.bill  # noqa: F401
+import app.models.bank_account  # noqa: F401
 import app.models.category  # noqa: F401
 import app.models.payment  # noqa: F401
 import app.models.reset_token  # noqa: F401

@@ -5,6 +5,9 @@ import { useTranslations } from "next-intl";
 
 export type TileColor = "blue" | "yellow" | "red";
 
+/** Translator passed into Tile and its callers. */
+export type TileTranslator = ReturnType<typeof useTranslations>;
+
 export const TILE_STYLES: Record<
   TileColor,
   { border: string; header: string; icon: string }
@@ -53,7 +56,7 @@ export function Tile({
   onCancel?: () => void;
   isCollapsed?: boolean;
   onToggle?: () => void;
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
 }) {
   const s = TILE_STYLES[color];
   return (

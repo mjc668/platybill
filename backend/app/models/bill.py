@@ -21,6 +21,7 @@ from app.core.database import Base
 from app.core.types import Money, UTCDateTime
 
 if TYPE_CHECKING:
+    from app.models.bank_account import BankAccount
     from app.models.category import Category
     from app.models.payment import Payment
     from app.models.user import User
@@ -48,6 +49,9 @@ class BillTemplate(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id"), nullable=False
+    )
+    preferred_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=True
     )
     frequency: Mapped[BillFrequency] = mapped_column(String(20), nullable=False)
     interval_count: Mapped[int] = mapped_column(
@@ -91,6 +95,7 @@ class BillTemplate(Base):
 
     user: Mapped[User] = relationship(back_populates="bills")
     category: Mapped[Category] = relationship(back_populates="bills")
+    preferred_account: Mapped[BankAccount | None] = relationship(back_populates="bills")
     instances: Mapped[list["PaymentInstance"]] = relationship(
         back_populates="template", cascade="all, delete-orphan"
     )

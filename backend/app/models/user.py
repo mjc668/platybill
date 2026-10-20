@@ -10,6 +10,7 @@ from app.core.database import Base
 from app.core.types import UTCDateTime
 
 if TYPE_CHECKING:
+    from app.models.bank_account import BankAccount
     from app.models.bill import BillTemplate
     from app.models.category import Category
 
@@ -88,5 +89,8 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     categories: Mapped[list[Category]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    bank_accounts: Mapped[list[BankAccount]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

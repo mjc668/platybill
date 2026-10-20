@@ -24,6 +24,10 @@ from app.schemas.bill import (
     PaymentInstanceOut,
     PendingConfirmationOut,
 )
+from app.services.bank_accounts import (
+    BankAccountError,
+    get_for_user as get_account_for_user,
+)
 from app.services.categories import (
     CategoryError,
     get_for_user as get_category_for_user,
@@ -125,6 +129,7 @@ def _to_out(
             "max_occurrences": inst.template.max_occurrences,
             "start_date": inst.template.start_date,
             "category": inst.template.category,
+            "preferred_account": inst.template.preferred_account,
             "email_sent_at": inst.email_sent_at,
             # Match the relationship's order_by even if the in-memory
             # collection was appended to before a reload.
@@ -141,7 +146,10 @@ def list_bills(
 ):
     q = (
         db.query(BillTemplate)
-        .options(selectinload(BillTemplate.category))
+        .options(
+            selectinload(BillTemplate.category),
+            selectinload(BillTemplate.preferred_account),
+        )
         .filter(
             BillTemplate.user_id == me.id,
             BillTemplate.is_deleted.is_(False),
@@ -225,9 +233,19 @@ def create_bill(
 
     category = _resolve_category(db, me, body.category_id, body.category)
 
+    preferred_account_id: int | None = None
+    if body.preferred_account_id is not None:
+        try:
+            preferred_account_id = get_account_for_user(
+                db, me.id, body.preferred_account_id
+            ).id
+        except BankAccountError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
     bill = BillTemplate(
         name=body.name,
         category_id=category.id,
+        preferred_account_id=preferred_account_id,
         frequency=frequency,
         interval_count=interval_count,
         max_occurrences=max_occurrences,
@@ -304,6 +322,9 @@ def list_payments(
         db.query(PaymentInstance)
         .options(
             selectinload(PaymentInstance.template).selectinload(BillTemplate.category),
+            selectinload(PaymentInstance.template).selectinload(
+                BillTemplate.preferred_account
+            ),
             selectinload(PaymentInstance.payments),
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
@@ -493,6 +514,9 @@ def needs_confirmation(
         db.query(PaymentInstance)
         .options(
             selectinload(PaymentInstance.template).selectinload(BillTemplate.category),
+            selectinload(PaymentInstance.template).selectinload(
+                BillTemplate.preferred_account
+            ),
             selectinload(PaymentInstance.payments),
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
@@ -700,6 +724,18 @@ def update_bill(
         bill.category_id = _resolve_category(
             db, me, category_id, legacy_key, allow_archived_id=bill.category_id
         ).id
+
+    if "preferred_account_id" in updates:
+        account_id = updates.pop("preferred_account_id")
+        if account_id is None:
+            bill.preferred_account_id = None
+        else:
+            try:
+                bill.preferred_account_id = get_account_for_user(
+                    db, me.id, account_id, allow_archived=True
+                ).id
+            except BankAccountError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     due_day_changed = "due_day" in updates and updates["due_day"] != bill.due_day
     for field, value in updates.items():

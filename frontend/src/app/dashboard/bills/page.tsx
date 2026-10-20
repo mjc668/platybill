@@ -26,8 +26,8 @@ import {
   type BillTemplateUpdate,
 } from "@/lib/bills-api";
 import { fetchCategories, categoryLabel, type Category } from "@/lib/categories-api";
+import { fetchBankAccounts, type BankAccount } from "@/lib/bank-accounts-api";
 import { categoryColor, categoryValue, sortCategories } from "@/lib/categories";
-import { fetchMe, type UserProfile } from "@/lib/user-api";
 import { SessionExpiredError } from "@/lib/api";
 import BillTemplateForm from "@/components/bills/BillTemplateForm";
 import ReviewInbox from "@/components/payments/ReviewInbox";
@@ -57,7 +57,7 @@ export default function BillsPage() {
   const locale = useLocale();
   const [templates, setTemplates] = useState<BillTemplateOut[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [expandedId, setExpandedId] = useState<number | "new" | null>(null);
@@ -95,11 +95,12 @@ export default function BillsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchBills(), fetchCategories(true)])
-      .then(([billData, categoryData]) => {
+    Promise.all([fetchBills(), fetchCategories(true), fetchBankAccounts()])
+      .then(([billData, categoryData, accountData]) => {
         if (!cancelled) {
           setTemplates(billData);
           setCategories(categoryData);
+          setBankAccounts(accountData);
           setLoadError(null);
           setLoading(false);
         }
@@ -483,6 +484,7 @@ export default function BillsPage() {
               defaultCurrency={profile?.default_currency ?? undefined}
               categories={pickerCategories}
               onCategoryCreated={handleCategoryCreated}
+              bankAccounts={bankAccounts}
               onSave={handleCreate}
               onCancel={() => setExpandedId(null)}
             />
@@ -545,6 +547,7 @@ export default function BillsPage() {
                 isExpanded={expandedId === tmpl.id}
                 categories={pickerCategories}
                 onCategoryCreated={handleCategoryCreated}
+                bankAccounts={bankAccounts}
                 colorClass={categoryColor(colorIndexById.get(tmpl.category.id) ?? 0)}
                 onEditToggle={() => toggleExpand(tmpl.id)}
                 onSave={(data) => handleUpdate(tmpl.id, data)}
@@ -598,6 +601,7 @@ export default function BillsPage() {
                           isExpanded={expandedId === tmpl.id}
                           categories={pickerCategories}
                           onCategoryCreated={handleCategoryCreated}
+                          bankAccounts={bankAccounts}
                           colorClass={categoryColor(colorIndexById.get(cat.id) ?? 0)}
                           onEditToggle={() => toggleExpand(tmpl.id)}
                           onSave={(data) => handleUpdate(tmpl.id, data)}

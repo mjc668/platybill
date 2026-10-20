@@ -9,7 +9,7 @@ import {
   updateMe,
   type UserProfile,
 } from "@/lib/user-api";
-import { Tile } from "./Tile";
+import { Tile, type TileTranslator } from "./Tile";
 
 const CURRENCY_PRESETS = ["PLN", "EUR", "USD", "AUD"] as const;
 
@@ -67,7 +67,7 @@ export function ProfileTile({
   profile: UserProfile;
   onProfileUpdate: (p: UserProfile) => void;
   onDirtyChange: (dirty: boolean) => void;
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
   isCollapsed?: boolean;
   onToggle?: () => void;
 }) {

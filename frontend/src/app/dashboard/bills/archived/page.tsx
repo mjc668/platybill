@@ -11,7 +11,7 @@ import {
   type BillTemplateOut,
 } from "@/lib/bills-api";
 import { fetchCategories, categoryLabel, type Category } from "@/lib/categories-api";
-import { sortCategories } from "@/lib/categories";
+import { bankAccountLabel } from "@/lib/bank-accounts-api";
 import { SessionExpiredError } from "@/lib/api";
 import { useCollapsedCategories } from "@/hooks/useCollapsedCategories";
 import DeleteBillDialog from "@/components/bills/DeleteBillDialog";
@@ -205,6 +205,11 @@ export default function ArchivedBillsPage() {
                           <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
                             {tmpl.amount} {tmpl.currency}
                           </span>
+                          {tmpl.preferred_account && (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+                              {bankAccountLabel(tmpl.preferred_account)}
+                            </span>
+                          )}
                           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
                             {t(`frequency.${normalizeBillFrequency(tmpl.frequency)}`, {
                               count: tmpl.interval_count ?? 1,

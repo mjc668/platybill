@@ -9,6 +9,7 @@ from pydantic import (
     model_validator,
 )
 from app.models.bill import BillFrequency, PaymentStatus
+from app.schemas.bank_account import BankAccountOut
 from app.schemas.category import CategoryOut
 
 _PERIOD_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -38,6 +39,7 @@ class BillTemplateCreate(BaseModel):
     name: str = Field(max_length=255)
     category_id: int | None = None  # preferred
     category: str | None = None  # legacy default-key string, resolved server-side
+    preferred_account_id: int | None = None
     frequency: BillFrequency
     interval_count: int = Field(1, ge=1)
     max_occurrences: int | None = Field(None, ge=1, le=999)  # None = unlimited
@@ -61,6 +63,7 @@ class BillTemplateUpdate(BaseModel):
     name: str | None = Field(None, max_length=255)
     category_id: int | None = None  # preferred
     category: str | None = None  # legacy default-key string, resolved server-side
+    preferred_account_id: int | None = None
     frequency: BillFrequency | None = None
     interval_count: int | None = Field(None, ge=1)
     max_occurrences: int | None = Field(None, ge=1, le=999)  # None = unlimited
@@ -81,6 +84,7 @@ class BillTemplateOut(BaseModel):
     id: int
     name: str
     category: CategoryOut
+    preferred_account: BankAccountOut | None = None
     frequency: BillFrequency
     interval_count: int = 1
     max_occurrences: int | None = None
@@ -139,6 +143,7 @@ class PaymentInstanceOut(BaseModel):
     max_occurrences: int | None = None
     start_date: date | None = None
     category: CategoryOut
+    preferred_account: BankAccountOut | None = None
     email_sent_at: datetime | None
     payments: list[PaymentOut] = []
 
@@ -201,6 +206,7 @@ class BackupTemplate(BaseModel):
     id: int
     name: str
     category: str | None
+    bank_account: str | None = None
     frequency: BillFrequency
     interval_count: int = Field(1, ge=1)
     max_occurrences: int | None = None

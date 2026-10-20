@@ -1,16 +1,15 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useTranslations } from "next-intl";
+import type { TileTranslator } from "./Tile";
 
 export function UnsavedChangesDialog({
-  onLeave,
   onStay,
   t,
 }: {
   onLeave: () => void;
   onStay: () => void;
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
 }) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">

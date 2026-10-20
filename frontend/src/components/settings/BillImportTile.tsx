@@ -19,7 +19,7 @@ import {
   type ImportStatusOut,
 } from "@/lib/imports-api";
 import { Switch } from "@/components/ui/Switch";
-import { Tile } from "./Tile";
+import { Tile, type TileTranslator } from "./Tile";
 
 function StatusRow({
   label,
@@ -49,7 +49,7 @@ export function BillImportTile({
   isCollapsed,
   onToggle,
 }: {
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
   isCollapsed?: boolean;
   onToggle?: () => void;
 }) {

@@ -12,6 +12,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import BillTemplateForm from "./BillTemplateForm";
 import type { Category } from "@/lib/categories-api";
+import { bankAccountLabel, type BankAccount } from "@/lib/bank-accounts-api";
 import {
   normalizeBillFrequency,
   type BillTemplateOut,
@@ -26,6 +27,8 @@ interface Props {
   /** Non-archived categories offered by the edit form's picker. */
   categories: Category[];
   onCategoryCreated: (category: Category) => void;
+  /** Non-archived bank accounts offered by the edit form's picker. */
+  bankAccounts: BankAccount[];
   /** Positional palette class for this bill's category. */
   colorClass: string;
   onEditToggle: () => void;
@@ -78,6 +81,7 @@ export default function BillTemplateRow({
   nextDue,
   categories,
   onCategoryCreated,
+  bankAccounts,
   colorClass,
   onEditToggle,
   onSave,
@@ -125,6 +129,11 @@ export default function BillTemplateRow({
             <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
               {template.amount} {template.currency}
             </span>
+            {template.preferred_account && (
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+                {bankAccountLabel(template.preferred_account)}
+              </span>
+            )}
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
               {t(`frequency.${frequency}`, { count: template.interval_count ?? 1 })}
             </span>
@@ -214,6 +223,7 @@ export default function BillTemplateRow({
             initial={{
               name: template.name,
               category_id: template.category.id,
+              preferred_account_id: template.preferred_account?.id ?? null,
               frequency: template.frequency,
               interval_count: template.interval_count,
               max_occurrences: template.max_occurrences,
@@ -226,8 +236,10 @@ export default function BillTemplateRow({
               is_paused: template.is_paused,
             }}
             initialCategory={template.category}
+            initialAccount={template.preferred_account}
             categories={categories}
             onCategoryCreated={onCategoryCreated}
+            bankAccounts={bankAccounts}
             onSave={onSave}
             onCancel={onEditToggle}
           />

@@ -4,14 +4,14 @@ import { Bell, BellOff } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useNotifications } from "@/hooks/useNotifications";
 import { Switch } from "@/components/ui/Switch";
-import { Tile } from "./Tile";
+import { Tile, type TileTranslator } from "./Tile";
 
 export function BrowserNotificationsTile({
   t,
   isCollapsed,
   onToggle,
 }: {
-  t: ReturnType<typeof useTranslations>;
+  t: TileTranslator;
   isCollapsed?: boolean;
   onToggle?: () => void;
 }) {

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { BankAccount } from "./bank-accounts-api";
 import type { Category } from "./categories-api";
 
 export type BillFrequency = "weekly" | "monthly" | "annual" | "one_off";
@@ -21,6 +22,7 @@ export interface BillTemplateOut {
   id: number;
   name: string;
   category: Category;
+  preferred_account: BankAccount | null;
   frequency: BillFrequency;
   interval_count: number;
   max_occurrences: number | null;
@@ -43,6 +45,7 @@ export interface BillTemplateOut {
 export interface BillTemplateCreate {
   name: string;
   category_id: number;
+  preferred_account_id?: number | null;
   frequency: BillFrequency;
   interval_count?: number;
   max_occurrences?: number | null;
