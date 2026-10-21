@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -18,10 +18,30 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f172a" },
+  ],
+};
+
 export const metadata: Metadata = {
   title: "Platybill",
   description: "Household bill tracking made simple",
-  themeColor: "#2563eb",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Platybill",
+  },
+  icons: {
+    icon: "/platybill-logo.png",
+    apple: "/icon-192.png",
+  },
 };
 
 function serializeForInlineScript(value: string): string {

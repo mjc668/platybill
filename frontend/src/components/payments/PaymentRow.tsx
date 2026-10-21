@@ -149,29 +149,29 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
       data-testid="payment-row"
       className={`rounded-xl border border-slate-200 px-4 py-3 shadow-sm dark:border-slate-700 transition-colors ${tileGradientClass()}`}
     >
-      <div className="flex flex-col gap-0.5">
-        {/* Name + category */}
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate">
+      <div className="flex flex-col gap-1 sm:gap-0.5">
+        {/* Name + category + account */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+          <span className="font-semibold text-sm sm:text-base text-slate-800 dark:text-slate-100 truncate">
             {instance.bill_name}
           </span>
-          <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
             {categoryLabel(instance.category, tRoot)}
           </span>
           {instance.preferred_account && (
-            <span className="shrink-0 truncate max-w-32 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+            <span className="shrink-0 truncate max-w-28 sm:max-w-32 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
               {bankAccountLabel(instance.preferred_account)}
             </span>
           )}
         </div>
         {/* Amount */}
         {parseFloat(instance.amount) > 0 && (
-          <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          <span className="text-sm sm:text-xs font-semibold sm:font-medium text-slate-700 dark:text-slate-200">
             {instance.amount} {instance.currency}
           </span>
         )}
         {/* Due date + status (left) — actions (right) */}
-        <div className="flex items-center justify-between gap-2 mt-0.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-1 sm:mt-0.5">
           <div className="flex items-center gap-1.5 text-xs min-w-0">
             <span className="text-slate-400 dark:text-slate-500 shrink-0">
               {t("due")} {dueDateFormatted}
@@ -196,15 +196,15 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
             {/* Primary action */}
             {!readOnly && instance.status !== "paid" && (
               <button
                 onClick={() => onMarkPaid(instance)}
-                className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1 text-sm font-medium text-blue-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-800 dark:bg-slate-800 dark:text-blue-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
+                className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-semibold sm:font-medium text-blue-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-800 dark:bg-slate-800 dark:text-blue-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
               >
-                <CheckCircle size={14} />
-                <span className="hidden sm:inline">{t("markAsPaid")}</span>
+                <CheckCircle size={15} />
+                <span>{t("markAsPaid")}</span>
               </button>
             )}
             {/* Edit amount — unpaid rows only */}
@@ -213,9 +213,9 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
                 onClick={() => setEditOpen(true)}
                 aria-label={t("editAmount")}
                 title={t("editAmount")}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
+                className="rounded-lg p-2 sm:p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
               >
-                <Pencil size={14} />
+                <Pencil size={15} />
               </button>
             )}
             {/* Note — legacy popover, only when there are no ledger entries */}
@@ -247,9 +247,9 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
                 disabled={reverting}
                 title={t("revert")}
                 aria-label={t("revert")}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
+                className="rounded-lg p-2 sm:p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
               >
-                {reverting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                {reverting ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
               </button>
             )}
             <div className="w-px h-4 bg-slate-200 dark:bg-slate-600 mx-0.5" />
@@ -259,13 +259,13 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
                 aria-label={t("emailNotification")}
                 aria-expanded={emailOpen}
                 onClick={() => setEmailOpen((o) => !o)}
-                className={`rounded-lg p-1.5 transition-colors ${
+                className={`rounded-lg p-2 sm:p-1.5 transition-colors ${
                   emailSentAt
                     ? "text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
                     : "text-slate-300 hover:bg-slate-100 hover:text-slate-400 dark:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-500"
                 }`}
               >
-                <AtSign size={14} />
+                <AtSign size={15} />
               </button>
               {emailOpen && (
                 <div className="absolute bottom-full right-0 mb-2 w-48 rounded-lg bg-slate-800 px-3 py-2 text-xs text-white shadow-lg dark:bg-slate-700 z-10 whitespace-normal">

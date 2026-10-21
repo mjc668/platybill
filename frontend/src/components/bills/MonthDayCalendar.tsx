@@ -87,13 +87,15 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
   function handleOpen() {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
+    const popupWidth = Math.min(288, window.innerWidth - 16);
     const popupHeight = 320;
     const spaceBelow = window.innerHeight - rect.bottom;
     const openUpward = spaceBelow < popupHeight + 8;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
     setPopupStyle(
       openUpward
-        ? { position: "fixed", bottom: window.innerHeight - rect.top + 6, left: rect.left, width: 288, zIndex: 9999 }
-        : { position: "fixed", top: rect.bottom + 6, left: rect.left, width: 288, zIndex: 9999 }
+        ? { position: "fixed", bottom: window.innerHeight - rect.top + 6, left, width: popupWidth, zIndex: 9999 }
+        : { position: "fixed", top: rect.bottom + 6, left, width: popupWidth, zIndex: 9999 }
     );
     setViewMonth(month);
     setOpen((o) => !o);

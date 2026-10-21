@@ -89,28 +89,28 @@ export default function SummaryCards({
   ];
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
       {cards.map(({ key, label, amount, count, accent, iconClass, Icon }) => (
         <div
           key={key}
           data-testid={`summary-${key}`}
-          className={`rounded-xl border border-slate-200 border-l-4 ${accent} bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800`}
+          className={`rounded-xl border border-slate-200 border-l-4 ${accent} bg-white p-3 sm:p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800`}
         >
-          <div className="flex items-center gap-3">
-            <div className={`rounded-lg p-2 ${iconClass}`}>
-              <Icon size={18} />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`rounded-lg p-1.5 sm:p-2 ${iconClass}`}>
+              <Icon size={16} className="sm:w-[18px] sm:h-[18px]" />
             </div>
-            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+            <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400 truncate">
               {label}
             </p>
           </div>
-          <p className="mt-3 text-xl font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+          <p className="mt-2 sm:mt-3 text-base sm:text-xl font-semibold tabular-nums text-slate-800 dark:text-slate-100">
             {amountFormatter.format(parseAmount(amount))}{" "}
-            <span className="text-sm font-medium text-slate-400 dark:text-slate-500">
+            <span className="text-xs sm:text-sm font-medium text-slate-400 dark:text-slate-500">
               {currency}
             </span>
           </p>
-          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+          <p className="mt-0.5 text-[11px] sm:text-xs text-slate-400 dark:text-slate-500">
             {t("cardCount", { count })}
           </p>
         </div>
@@ -118,19 +118,19 @@ export default function SummaryCards({
 
       <div
         data-testid="summary-paid"
-        className="rounded-xl border border-slate-200 border-l-4 border-l-blue-400 bg-white p-4 shadow-sm dark:border-slate-700 dark:border-l-blue-500 dark:bg-slate-800"
+        className="rounded-xl border border-slate-200 border-l-4 border-l-blue-400 bg-white p-3 sm:p-4 shadow-sm dark:border-slate-700 dark:border-l-blue-500 dark:bg-slate-800"
       >
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-blue-100 p-2 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400">
-            <CheckCircle2 size={18} />
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="rounded-lg bg-blue-100 p-1.5 sm:p-2 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400">
+            <CheckCircle2 size={16} className="sm:w-[18px] sm:h-[18px]" />
           </div>
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+          <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400 truncate">
             {t("cardPaid")}
           </p>
         </div>
-        <p className="mt-3 text-xl font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+        <p className="mt-2 sm:mt-3 text-base sm:text-xl font-semibold tabular-nums text-slate-800 dark:text-slate-100">
           {amountFormatter.format(paid)}{" "}
-          <span className="text-sm font-medium text-slate-400 dark:text-slate-500">
+          <span className="text-xs sm:text-sm font-medium text-slate-400 dark:text-slate-500">
             {currency}
           </span>
         </p>
@@ -147,7 +147,7 @@ export default function SummaryCards({
             style={{ width: `${paidPercent}%` }}
           />
         </div>
-        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+        <p className="mt-1 text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 truncate">
           {t("cardPaidProgress", {
             percent: Math.round(paidPercent),
             amount: `${amountFormatter.format(due)} ${currency}`,

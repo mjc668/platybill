@@ -4,11 +4,12 @@ import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { Archive, Receipt, CreditCard, LayoutDashboard, LogOut, Menu, X, Settings } from "lucide-react";
+import { Archive, Receipt, CreditCard, LayoutDashboard, LogOut, Settings } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/context/auth-context";
 import { fetchMe } from "@/lib/user-api";
 import ThemeToggle from "@/components/ThemeToggle";
+import BottomNav from "@/components/navigation/BottomNav";
 
 const NAV_ITEMS = [
   { href: "/dashboard", labelKey: "dashboard" as const, icon: LayoutDashboard, exact: true },
@@ -27,10 +28,8 @@ export default function DashboardLayout({
   const t = useTranslations("DashboardLayout");
   const router = useRouter();
   const pathname = usePathname();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const menuRef = useRef<HTMLElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,17 +43,6 @@ export default function DashboardLayout({
       fetchMe().then((p) => setUserEmail(p.email)).catch(() => {});
     }
   }, [isAuthenticated]);
-
-  // Close mobile menu on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuOpen]);
 
   // Close user dropdown on outside click
   useEffect(() => {
@@ -74,7 +62,7 @@ export default function DashboardLayout({
   return (
     <div className="flex min-h-screen flex-col">
       {/* Top nav */}
-      <header ref={menuRef} className="relative sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-700 dark:bg-slate-800/80">
+      <header className="relative sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-700 dark:bg-slate-800/80">
         <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-3">
           {/* Brand */}
           <Link
@@ -109,8 +97,8 @@ export default function DashboardLayout({
             })}
           </nav>
 
-          {/* Desktop right side */}
-          <div className="hidden md:flex items-center gap-1 ml-auto">
+          {/* Right side controls (theme toggle + user avatar dropdown) */}
+          <div className="flex items-center gap-1.5 ml-auto">
             <ThemeToggle />
 
             {/* Avatar + dropdown */}
@@ -138,7 +126,15 @@ export default function DashboardLayout({
                       {userEmail}
                     </p>
                   </div>
-                  <div className="p-2">
+                  <div className="p-2 flex flex-col gap-1">
+                    <Link
+                      href="/dashboard/bills/archived"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-all hover:bg-slate-50 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-700/50 dark:hover:text-slate-200"
+                    >
+                      <Archive size={14} />
+                      {t("archived")}
+                    </Link>
                     <button
                       onClick={() => { setUserMenuOpen(false); logout(); }}
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-all hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/20 dark:hover:text-red-400"
@@ -151,70 +147,14 @@ export default function DashboardLayout({
               )}
             </div>
           </div>
-
-          {/* Mobile: utility icons + hamburger */}
-          <div className="flex md:hidden items-center gap-1 ml-auto">
-            <button
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-label="Toggle menu"
-              aria-expanded={menuOpen}
-              className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
-            >
-              {menuOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
-
-            {/* Mobile dropdown */}
-            {menuOpen && (
-              <div className="absolute top-full inset-x-0 border-b border-slate-200 bg-white shadow-md dark:border-slate-700 dark:bg-slate-800">
-                <div className="mx-auto max-w-4xl px-4 py-3 flex flex-col gap-1">
-                  {/* Signed-in email header */}
-                  {userEmail && (
-                    <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-700/50">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-700 text-xs font-bold text-white dark:bg-blue-600">
-                        {initials}
-                      </div>
-                      <span className="truncate text-sm text-slate-600 dark:text-slate-300">{userEmail}</span>
-                    </div>
-                  )}
-
-                  {NAV_ITEMS.map(({ href, labelKey, icon: Icon, exact }) => {
-                    const active = pathname === href || (!exact && pathname.startsWith(href + "/"));
-                    return (
-                      <Link
-                        key={href}
-                        href={href}
-                        onClick={() => setMenuOpen(false)}
-                        className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
-                          active
-                            ? "border border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                            : "border border-transparent text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:text-slate-400 dark:hover:border-blue-800 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
-                        }`}
-                      >
-                        <Icon size={16} />
-                        {t(labelKey)}
-                      </Link>
-                    );
-                  })}
-
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700 mt-1">
-                    <ThemeToggle />
-                    <button
-                      onClick={() => { setMenuOpen(false); logout(); }}
-                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-red-800 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                    >
-                      <LogOut size={15} />
-                      {t("logOut")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </header>
 
       {/* Page content */}
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 pb-20 pb-safe md:pb-6">{children}</main>
+
+      {/* Mobile bottom navigation bar */}
+      <BottomNav />
     </div>
   );
 }

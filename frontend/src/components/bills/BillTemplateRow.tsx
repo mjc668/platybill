@@ -1,13 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import {
   Pencil,
   Archive as ArchiveIcon,
   ChevronUp,
   PauseCircle,
   NotebookPen,
-  MoreHorizontal,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import BillTemplateForm from "./BillTemplateForm";
@@ -90,7 +88,6 @@ export default function BillTemplateRow({
   const t = useTranslations("BillTemplateRow");
   const tFreq = useTranslations("Frequencies");
   const locale = useLocale();
-  const [actionsOpen, setActionsOpen] = useState(false);
 
   const frequency = normalizeBillFrequency(template.frequency);
   const dueLabel = formatDueLabel(template, locale);
@@ -180,39 +177,23 @@ export default function BillTemplateRow({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Mobile: ⋯ toggle */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => setActionsOpen((o) => !o)}
-            aria-label="More actions"
-            className="sm:hidden rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+            onClick={onEditToggle}
+            aria-label={isExpanded ? t("close") : t("edit")}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
           >
-            <MoreHorizontal size={16} />
+            {isExpanded ? <ChevronUp size={15} /> : <Pencil size={15} />}
+            <span className="hidden sm:inline">{isExpanded ? t("close") : t("edit")}</span>
           </button>
-
-          {/* Edit + Archive: hidden on mobile unless actionsOpen; hover-reveal on sm+ */}
-          <div
-            className={`items-center gap-1 ${
-              actionsOpen ? "flex" : "hidden"
-            } sm:flex sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 sm:transition-opacity sm:duration-150`}
+          <button
+            onClick={onArchive}
+            aria-label={t("archive")}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-500 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-red-800 dark:hover:bg-red-900/20 dark:hover:text-red-400"
           >
-            <button
-              onClick={onEditToggle}
-              aria-label={isExpanded ? t("close") : t("edit")}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-500 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-            >
-              {isExpanded ? <ChevronUp size={15} /> : <Pencil size={15} />}
-              <span className="hidden sm:inline">{isExpanded ? t("close") : t("edit")}</span>
-            </button>
-            <button
-              onClick={onArchive}
-              aria-label={t("archive")}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-400 shadow-sm transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500 dark:hover:border-red-800 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-            >
-              <ArchiveIcon size={15} />
-              <span className="hidden sm:inline">{t("archive")}</span>
-            </button>
-          </div>
+            <ArchiveIcon size={15} />
+            <span className="hidden sm:inline">{t("archive")}</span>
+          </button>
         </div>
       </div>
 

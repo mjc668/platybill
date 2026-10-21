@@ -25,6 +25,12 @@ interface Props {
 
 const MAX_CHIPS = 3;
 
+const DOT_COLORS: Record<string, string> = {
+  upcoming: "bg-blue-500",
+  overdue: "bg-red-500",
+  paid: "bg-emerald-500",
+};
+
 function firstDayOffset(year: number, monthIndex: number): number {
   const jsDay = new Date(year, monthIndex, 1).getDay(); // 0 = Sunday
   return jsDay === 0 ? 6 : jsDay - 1;
@@ -100,7 +106,7 @@ export default function PaymentCalendar({
 
   return (
     <div data-testid="payment-calendar" role="group" aria-label={t("calendarLabel")}>
-      <div data-testid="payment-calendar-grid" className="grid grid-cols-8 gap-1">
+      <div data-testid="payment-calendar-grid" className="grid grid-cols-7 sm:grid-cols-8 gap-1">
         {weekdayHeaders.map((wd, i) => (
           <div
             key={i}
@@ -109,7 +115,7 @@ export default function PaymentCalendar({
             {wd.slice(0, 2)}
           </div>
         ))}
-        <div className="flex h-7 items-center justify-center truncate px-0.5 text-xs font-medium text-slate-400 dark:text-slate-500">
+        <div className="hidden sm:flex h-7 items-center justify-center truncate px-0.5 text-xs font-medium text-slate-400 dark:text-slate-500">
           {t("calendarWeek")}
         </div>
 
@@ -137,7 +143,7 @@ export default function PaymentCalendar({
                     aria-label={formatFullDate(key)}
                     aria-pressed={isSelected}
                     onClick={() => setSelectedDay(key)}
-                    className={`flex min-h-[76px] flex-col items-stretch gap-1 rounded-lg border p-1 text-left align-top transition-colors ${
+                    className={`flex min-h-[48px] sm:min-h-[76px] flex-col items-stretch gap-1 rounded-lg border p-1 text-left align-top transition-colors ${
                       isSelected
                         ? "border-blue-600 bg-blue-50 dark:border-blue-600 dark:bg-blue-900/20"
                         : "border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/50 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-blue-700"
@@ -154,30 +160,51 @@ export default function PaymentCalendar({
                     >
                       {day}
                     </span>
-                    {visible.map((inst) => (
-                      <span
-                        key={inst.id}
-                        className={`block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${
-                          STATUS_STYLES[inst.status] ?? ""
-                        }`}
-                      >
-                        {inst.bill_name} · {inst.amount}
-                      </span>
-                    ))}
-                    {extra > 0 && (
-                      <span className="block text-center text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                        +{extra}
-                      </span>
-                    )}
-                    {dayInstances.length > 0 && (
-                      <span className="mt-auto block break-words text-[10px] font-semibold leading-tight text-slate-500 dark:text-slate-400">
-                        {formatRemaining(dayInstances)}
-                      </span>
-                    )}
+
+                    {/* Mobile: compact status dots */}
+                    <div className="flex sm:hidden items-center justify-center gap-0.5 mt-auto pb-0.5">
+                      {visible.map((inst) => (
+                        <span
+                          key={inst.id}
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            DOT_COLORS[inst.status] ?? "bg-slate-400"
+                          }`}
+                        />
+                      ))}
+                      {extra > 0 && (
+                        <span className="text-[9px] font-bold text-slate-400 leading-none">
+                          +
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Desktop: detailed chips */}
+                    <div className="hidden sm:flex flex-col gap-1 w-full">
+                      {visible.map((inst) => (
+                        <span
+                          key={inst.id}
+                          className={`block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${
+                            STATUS_STYLES[inst.status] ?? ""
+                          }`}
+                        >
+                          {inst.bill_name} · {inst.amount}
+                        </span>
+                      ))}
+                      {extra > 0 && (
+                        <span className="block text-center text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                          +{extra}
+                        </span>
+                      )}
+                      {dayInstances.length > 0 && (
+                        <span className="mt-auto block break-words text-[10px] font-semibold leading-tight text-slate-500 dark:text-slate-400">
+                          {formatRemaining(dayInstances)}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 );
               })}
-              <div className="flex min-h-[76px] flex-col items-end gap-1 rounded-lg px-1 pt-1.5">
+              <div className="hidden sm:flex min-h-[76px] flex-col items-end gap-1 rounded-lg px-1 pt-1.5">
                 {weekItems.length > 0 && (
                   <span className="text-right text-[10px] font-semibold leading-tight text-slate-400 dark:text-slate-500">
                     {formatRemaining(weekItems)}

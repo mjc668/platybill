@@ -3,6 +3,23 @@
 /* Class-based dark mode for Tailwind v4 */
 @custom-variant dark (&:is(.dark *));
 
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
 body {
   font-family: var(--font-geist-sans), Arial, sans-serif;
 }

@@ -10,6 +10,7 @@ import RestoreButton from "@/components/RestoreButton";
 import SnapshotRecoverySection from "@/components/SnapshotRecoverySection";
 import { Tile } from "@/components/settings/Tile";
 import { ProfileTile } from "@/components/settings/ProfileTile";
+import { InstallAppTile } from "@/components/settings/InstallAppTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
 import { SmtpTile } from "@/components/settings/SmtpTile";
@@ -101,7 +102,7 @@ export default function SettingsPage() {
 
   if (!profile) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-8 space-y-4">
+      <div className="mx-auto max-w-4xl px-3 py-4 sm:px-4 sm:py-8 space-y-4">
         {[1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="h-32 rounded-xl bg-slate-100 dark:bg-slate-700 animate-pulse" />
         ))}
@@ -110,7 +111,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 space-y-4">
+    <div className="mx-auto max-w-4xl px-3 py-4 sm:px-4 sm:py-8 space-y-4">
       <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100">
         {t("pageTitle")}
       </h1>
@@ -152,6 +153,7 @@ export default function SettingsPage() {
           onDirtyChange={onProfileDirty}
           t={t}
         />
+        <InstallAppTile />
       </div>
 
       <div
