@@ -313,10 +313,10 @@ def update_import_settings(
         app_settings.set_value(db, app_settings.LLM_MODEL_KEY, model)
     if body.llm_base_url is not None:
         url = body.llm_base_url.strip().rstrip("/")
-        if url and not url.startswith(("http://", "https://")):
-            raise HTTPException(
-                status_code=422, detail="URL must start with http:// or https://"
-            )
+        if url:
+            error = app_settings.validate_server_url(url)
+            if error:
+                raise HTTPException(status_code=422, detail=error)
         app_settings.set_value(db, app_settings.LLM_BASE_URL_KEY, url or None)
     if body.llm_api_key is not None:
         app_settings.set_value(

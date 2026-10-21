@@ -95,10 +95,10 @@ def update_notification_settings(
         apprise = body.apprise
         if apprise.base_url is not None:
             url = apprise.base_url.strip().rstrip("/")
-            if url and not url.startswith(("http://", "https://")):
-                raise HTTPException(
-                    status_code=422, detail="URL must start with http:// or https://"
-                )
+            if url:
+                error = app_settings.validate_server_url(url)
+                if error:
+                    raise HTTPException(status_code=422, detail=error)
             app_settings.set_value(db, app_settings.APPRISE_BASE_URL_KEY, url or None)
         if apprise.urls is not None:
             app_settings.set_value(

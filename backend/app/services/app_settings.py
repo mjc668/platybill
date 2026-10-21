@@ -145,7 +145,56 @@ def ollama_config(db: Session) -> OllamaConfig | None:
     )
 
 
-def validate_ollama_url(url: str) -> str | None:
+def _host_is_metadata(host: str) -> bool:
+    """True for cloud metadata / link-local endpoints (the SSRF targets).
+
+    Loopback, LAN, and Docker names are legitimate here: this is a
+    self-hosted app and Ollama typically runs on localhost or the LAN.
+    """
+    lowered = host.lower().rstrip(".")
+    if lowered in {"169.254.169.254", "metadata.google.internal"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_link_local
+
+
+def _host_resolves_to_metadata(host: str) -> bool:
+    """Best-effort DNS check for metadata endpoints behind a hostname.
+
+    Unresolvable hosts are allowed (e.g. docker service names in tests).
+    """
+    lowered = host.lower().rstrip(".")
+    if lowered in {"metadata.google.internal"}:
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return False  # literal IPs handled by _host_is_metadata
+    except ValueError:
+        pass
+    try:
+        for info in socket.getaddrinfo(host, None):
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if ip.is_link_local or str(ip) == "169.254.169.254":
+                return True
+    except socket.gaierror:
+        pass
+    return False
+
+
+def validate_server_url(url: str) -> str | None:
+    """Validate a user-supplied server URL (Ollama, LLM, Apprise).
+
+    Requires http(s), a host, and no embedded credentials; blocks cloud
+    metadata endpoints. LAN/loopback hosts are allowed — self-hosted
+    services live there.
+    """
     if not url.startswith(("http://", "https://")):
         return "URL must start with http:// or https://"
     parsed = urlparse(url)
@@ -154,50 +203,14 @@ def validate_ollama_url(url: str) -> str | None:
         return "URL must include a host"
     if parsed.username or parsed.password:
         return "URL must not include credentials"
-    lowered = host.lower()
-    if lowered in {
-        "localhost",
-        "127.0.0.1",
-        "::1",
-        "0.0.0.0",
-        "169.254.169.254",
-        "metadata.google.internal",
-    }:
+    if _host_is_metadata(host) or _host_resolves_to_metadata(host):
         return "URL host is not allowed"
-    try:
-        ip = ipaddress.ip_address(host)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            return "URL host is not allowed"
-    except ValueError:
-        pass
-    # Best-effort DNS check: block hostnames that resolve to private ranges.
-    # Unresolvable hosts are allowed (e.g. docker service names in tests).
-    try:
-        for info in socket.getaddrinfo(host, None):
-            addr = info[4][0]
-            try:
-                ip = ipaddress.ip_address(addr)
-            except ValueError:
-                continue
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_multicast
-                or ip.is_unspecified
-            ):
-                return "URL host is not allowed"
-    except socket.gaierror:
-        pass
     return None
+
+
+def validate_ollama_url(url: str) -> str | None:
+    """Legacy alias for validate_server_url (Ollama settings path)."""
+    return validate_server_url(url)
 
 
 def _bool_override(db: Session, key: str, default: bool) -> bool:

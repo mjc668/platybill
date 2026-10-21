@@ -98,3 +98,38 @@ def test_import_settings_imap_round_trip(client):
     assert body["imap_mark_read"] is False
     assert body["imap_password_configured"] is True
     assert "s3cret" not in r.text
+
+
+def test_server_url_allows_local_and_lan():
+    from app.services.app_settings import validate_server_url
+
+    for url in [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://10.112.200.20:11434",
+        "http://192.168.1.50:11434",
+        "http://ollama:11434",
+        "https://api.openai.com/v1",
+    ]:
+        assert validate_server_url(url) is None, url
+
+
+def test_server_url_blocks_metadata_and_credentials():
+    from app.services.app_settings import validate_server_url
+
+    assert (
+        validate_server_url("http://169.254.169.254/latest/meta-data")
+        == "URL host is not allowed"
+    )
+    assert (
+        validate_server_url("http://metadata.google.internal/")
+        == "URL host is not allowed"
+    )
+    assert (
+        validate_server_url("http://user:pass@host:11434")
+        == "URL must not include credentials"
+    )
+    assert (
+        validate_server_url("gopher://host:70")
+        == "URL must start with http:// or https://"
+    )
