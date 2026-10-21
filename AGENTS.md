@@ -10,6 +10,7 @@ Platybill is a household bill-tracking PWA. Stack: Next.js 16 (App Router, TypeS
 - **Migrations run automatically on container start.** `docker/entrypoint.sh` takes a pre-migration SQLite snapshot into `/data/backups`, then runs `alembic upgrade head`. New model changes need a new revision: `cd backend && uv run alembic revision --autogenerate -m "<desc>"`, hand-review it (SQLite migrations run with `render_as_batch=True`), then `upgrade head`.
 - **Use SQLAlchemy 2.0 `Mapped[T]` / `mapped_column()` style.** The 1.x `Column()` pattern will pass linting but is wrong for this codebase — see `@backend/app/models/bill.py`.
 - **SQLite is the only database.** Money uses the `Money` type decorator (integer cents) and timestamps use `UTCDateTime` (naive UTC storage) — see `@backend/app/core/types.py`. Avoid Postgres-only SQL in queries and keep date functions portable (`strftime`, not `to_char`).
+- **Always commit, push, and watch CI to green.** After completing and verifying changes locally, always stage, commit with a Conventional Commit message, and push to `main`. You must actively watch the GitHub Actions CI run (e.g. via `nix-shell -p gh --run "gh run watch <run-id>"`) until all jobs complete successfully. Never leave uncommitted changes or exit while CI is red or unfinished.
 
 ## Project Structure
 
@@ -65,4 +66,10 @@ To update the secrets baseline after an intentional addition: `detect-secrets sc
 ## Commit Guidelines
 
 Conventional Commits prefix required: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`. One-line subject under 72 characters. Reference the PRD FR number in the body when implementing a functional requirement (e.g. `Implements FR-009`).
-Finish the job: commit related changes together, push to `main`, then confirm the CI run for the pushed commit completes successfully — fix-forward on failure, never leave `main` red.
+
+**Finish the job:**
+1. Commit related changes together with a conventional commit message.
+2. Push to `main`.
+3. Actively watch the CI workflow (e.g. `nix-shell -p gh --run "gh run watch <run-id>"`).
+4. Verify every stage (frontend, backend, docker-e2e, publish) completes with a green status.
+5. Fix-forward immediately on failure — never leave `main` red or exit without confirming green CI.
