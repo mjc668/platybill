@@ -12,11 +12,15 @@ import {
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
+  fetchImapFolders,
   fetchImportStatus,
   scanNow,
+  testImap,
   testOllama,
   updateImportSettings,
   type ImportStatusOut,
+  type LlmProvider,
+  LLM_PROVIDERS,
 } from "@/lib/imports-api";
 import { Switch } from "@/components/ui/Switch";
 import { Tile, type TileTranslator } from "./Tile";
@@ -58,7 +62,7 @@ export function BillImportTile({
 
   const [status, setStatus] = useState<ImportStatusOut | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"test" | "scan" | "save" | null>(null);
+  const [busy, setBusy] = useState<"test" | "testImap" | "scan" | "save" | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(
     null,
   );
@@ -68,7 +72,21 @@ export function BillImportTile({
   const [directory, setDirectory] = useState("/data/import");
   const [minutes, setMinutes] = useState("15");
   const [ollamaUrl, setOllamaUrl] = useState("");
-  const [ollamaModel, setOllamaModel] = useState("");
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>("ollama");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [imapHost, setImapHost] = useState("");
+  const [imapPort, setImapPort] = useState("993");
+  const [imapUser, setImapUser] = useState("");
+  const [imapPassword, setImapPassword] = useState("");
+  const [imapFolder, setImapFolder] = useState("INBOX");
+  const [imapTls, setImapTls] = useState(true);
+  const [imapPollMinutes, setImapPollMinutes] = useState("15");
+  const [imapMarkRead, setImapMarkRead] = useState(true);
+  const [imapSenders, setImapSenders] = useState("");
+  const [folders, setFolders] = useState<string[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +98,15 @@ export function BillImportTile({
         setDirectory(data.import_dir);
         setMinutes(String(data.import_poll_minutes));
         setOllamaUrl(data.ollama_base_url ?? "");
-        setOllamaModel(data.ollama_model);
+        setLlmProvider(data.llm_provider);
+        setLlmModel(data.llm_model);
+        setLlmBaseUrl(data.llm_base_url ?? "");
+        setImapHost(data.imap_host ?? "");
+        setImapPort(String(data.imap_port));
+        setImapFolder(data.imap_folder);
+        setImapTls(data.imap_tls);
+        setImapPollMinutes(String(data.imap_poll_minutes));
+        setImapMarkRead(data.imap_mark_read);
         setLoading(false);
       })
       .catch(() => {
@@ -95,16 +121,37 @@ export function BillImportTile({
   const minutesValid = Number.isFinite(minutesValue) && minutesValue >= 1 && minutesValue <= 1440;
   const directoryValid = directory.startsWith("/");
   const urlValid = ollamaUrl === "" || /^https?:\/\//.test(ollamaUrl);
+  const llmUrlValid = llmBaseUrl === "" || /^https?:\/\//.test(llmBaseUrl);
+  const imapPortValue = parseInt(imapPort, 10);
+  const imapPortValid =
+    Number.isFinite(imapPortValue) && imapPortValue >= 1 && imapPortValue <= 65535;
+  const imapMinutesValue = parseInt(imapPollMinutes, 10);
+  const imapMinutesValid =
+    Number.isFinite(imapMinutesValue) && imapMinutesValue >= 1 && imapMinutesValue <= 1440;
   const dirty =
     status !== null &&
     (enabled !== status.import_enabled ||
       directory !== status.import_dir ||
       minutesValue !== status.import_poll_minutes ||
       ollamaUrl !== (status.ollama_base_url ?? "") ||
-      ollamaModel !== status.ollama_model);
+      llmProvider !== status.llm_provider ||
+      llmModel !== status.llm_model ||
+      llmBaseUrl !== (status.llm_base_url ?? "") ||
+      llmApiKey !== "" ||
+      imapHost !== (status.imap_host ?? "") ||
+      imapPortValue !== status.imap_port ||
+      imapFolder !== status.imap_folder ||
+      imapTls !== status.imap_tls ||
+      imapMinutesValue !== status.imap_poll_minutes ||
+      imapMarkRead !== status.imap_mark_read ||
+      imapUser.trim() !== "" ||
+      imapPassword !== "" ||
+      imapSenders.trim() !== "");
 
   async function handleSave() {
-    if (!minutesValid || !directoryValid || !urlValid || ollamaModel === "") return;
+    if (!minutesValid || !directoryValid || !urlValid || !llmUrlValid) return;
+    if (!imapPortValid || !imapMinutesValid) return;
+    if (llmProvider !== "ollama" && llmModel.trim() === "") return;
     setBusy("save");
     setMessage(null);
     try {
@@ -113,15 +160,38 @@ export function BillImportTile({
         directory,
         poll_minutes: minutesValue,
         ollama_base_url: ollamaUrl,
-        ollama_model: ollamaModel,
+        ...(llmProvider === "ollama" ? { ollama_model: llmModel.trim() || undefined } : {}),
+        llm_provider: llmProvider,
+        llm_model: llmModel.trim() || undefined,
+        llm_base_url: llmBaseUrl.trim() === "" ? null : llmBaseUrl.trim(),
+        ...(imapHost.trim() !== "" ? { imap_host: imapHost.trim() } : {}),
+        imap_port: imapPortValid ? imapPortValue : undefined,
+        ...(imapUser.trim() !== "" ? { imap_user: imapUser.trim() } : {}),
+        ...(imapPassword !== "" ? { imap_password: imapPassword } : {}),
+        imap_folder: imapFolder.trim() || undefined,
+        imap_tls: imapTls,
+        imap_poll_minutes: imapMinutesValid ? imapMinutesValue : undefined,
+        imap_mark_read: imapMarkRead,
+        ...(imapSenders.trim() !== "" ? { imap_allowed_senders: imapSenders.trim() } : {}),
       });
       setStatus(updated);
       setEnabled(updated.import_enabled);
       setDirectory(updated.import_dir);
       setMinutes(String(updated.import_poll_minutes));
       setOllamaUrl(updated.ollama_base_url ?? "");
-      setOllamaModel(updated.ollama_model);
-      setMessage({ tone: "ok", text: ti("saved") });
+      setLlmProvider(updated.llm_provider);
+      setLlmModel(updated.llm_model);
+      setLlmBaseUrl(updated.llm_base_url ?? "");
+      setLlmApiKey("");
+      setImapHost(updated.imap_host ?? "");
+      setImapPort(String(updated.imap_port));
+      setImapUser("");
+      setImapFolder(updated.imap_folder);
+      setImapTls(updated.imap_tls);
+      setImapPollMinutes(String(updated.imap_poll_minutes));
+      setImapMarkRead(updated.imap_mark_read);
+      setImapPassword("");
+      setImapSenders("");
     } catch (err) {
       setMessage({
         tone: "error",
@@ -167,13 +237,39 @@ export function BillImportTile({
     }
   }
 
-  const ollamaTone = status?.ollama_reachable
-    ? status.model_available
-      ? "ok"
-      : "warn"
-    : status?.ollama_configured
-      ? "warn"
-      : "off";
+  async function handleLoadFolders() {
+    setFoldersLoading(true);
+    setMessage(null);
+    try {
+      setFolders(await fetchImapFolders());
+    } catch (err) {
+      setMessage({
+        tone: "error",
+        text: err instanceof Error ? err.message : ti("foldersFailed"),
+      });
+    } finally {
+      setFoldersLoading(false);
+    }
+  }
+
+  async function handleTestImap() {
+    setBusy("testImap");
+    setMessage(null);
+    try {
+      const result = await testImap();
+      setMessage({
+        tone: result.ok ? "ok" : "error",
+        text: result.ok
+          ? ti("imapTestOk", { folder: result.folder ?? "", unseen: result.unseen ?? 0 })
+          : (result.error ?? ti("testFailed")),
+      });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof Error ? err.message : ti("testFailed") });
+    } finally {
+      setBusy(null);
+      setRefreshToken((token) => token + 1);
+    }
+  }
 
   const inputClass =
     "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
@@ -197,23 +293,19 @@ export function BillImportTile({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <StatusRow
-              label={ti("ollamaLabel")}
+              label={ti("llmLabel")}
               value={
-                !status.ollama_configured
+                !status.llm_configured
                   ? ti("notConfigured")
-                  : status.ollama_reachable
-                    ? status.model_available
-                      ? ti("ready", { model: status.ollama_model })
-                      : ti("modelMissing", { model: status.ollama_model })
-                    : ti("unreachable")
+                  : ti("llmReady", { provider: status.llm_provider, model: status.llm_model })
               }
-              tone={ollamaTone}
+              tone={status.llm_configured ? "ok" : "off"}
             />
             <StatusRow
               label={ti("imapLabel")}
               value={
                 status.imap_configured
-                  ? (status.imap_user ?? ti("configured"))
+                  ? ti("imapReady", { folder: status.imap_folder })
                   : ti("notConfigured")
               }
               tone={status.imap_configured ? "ok" : "off"}
@@ -234,42 +326,105 @@ export function BillImportTile({
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <label
-                  htmlFor="ollama-url"
+                  htmlFor="llm-provider"
                   className="text-xs text-slate-500 dark:text-slate-400"
                 >
-                  {ti("ollamaUrlLabel")}
-                </label>
-                <input
-                  id="ollama-url"
-                  value={ollamaUrl}
-                  placeholder="http://host:11434"
-                  onChange={(e) => setOllamaUrl(e.target.value)}
-                  className={`${inputClass} w-64`}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label
-                  htmlFor="ollama-model"
-                  className="text-xs text-slate-500 dark:text-slate-400"
-                >
-                  {ti("ollamaModelLabel")}
+                  {ti("llmProviderLabel")}
                 </label>
                 <select
-                  id="ollama-model"
-                  value={ollamaModel}
-                  onChange={(e) => setOllamaModel(e.target.value)}
-                  className={`${inputClass} w-48`}
+                  id="llm-provider"
+                  value={llmProvider}
+                  onChange={(e) => setLlmProvider(e.target.value as LlmProvider)}
+                  className={`${inputClass} w-40`}
                 >
-                  {status.available_models.length === 0 && ollamaModel !== "" && (
-                    <option value={ollamaModel}>{ollamaModel}</option>
-                  )}
-                  {status.available_models.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
+                  {LLM_PROVIDERS.map((p) => (
+                    <option key={p} value={p}>
+                      {ti(`llmProvider_${p}`)}
                     </option>
                   ))}
                 </select>
               </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="llm-model"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("llmModelLabel")}
+                </label>
+                {llmProvider === "ollama" ? (
+                  <select
+                    id="llm-model"
+                    value={llmModel}
+                    onChange={(e) => setLlmModel(e.target.value)}
+                    className={`${inputClass} w-48`}
+                  >
+                    {status.available_models.length === 0 && llmModel !== "" && (
+                      <option value={llmModel}>{llmModel}</option>
+                    )}
+                    {status.available_models.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id="llm-model"
+                    value={llmModel}
+                    placeholder={ti("llmModelPlaceholder")}
+                    onChange={(e) => setLlmModel(e.target.value)}
+                    className={`${inputClass} w-48`}
+                  />
+                )}
+              </div>
+              {(llmProvider === "ollama" || llmProvider === "opencode") && (
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="llm-url"
+                    className="text-xs text-slate-500 dark:text-slate-400"
+                  >
+                    {ti("llmUrlLabel")}
+                  </label>
+                  <input
+                    id="llm-url"
+                    value={llmProvider === "ollama" ? ollamaUrl : llmBaseUrl}
+                    placeholder={
+                      llmProvider === "ollama" ? "http://host:11434" : "http://host:11434/v1"
+                    }
+                    onChange={(e) =>
+                      llmProvider === "ollama"
+                        ? setOllamaUrl(e.target.value)
+                        : setLlmBaseUrl(e.target.value)
+                    }
+                    className={`${inputClass} w-64`}
+                  />
+                </div>
+              )}
+              {llmProvider !== "ollama" && (
+                <div className="flex flex-col gap-1">
+                  <label
+                    htmlFor="llm-key"
+                    className="text-xs text-slate-500 dark:text-slate-400"
+                  >
+                    {status.llm_api_key_configured
+                      ? ti("llmKeySetLabel")
+                      : ti("llmKeyLabel")}
+                  </label>
+                  <input
+                    id="llm-key"
+                    type="password"
+                    value={llmApiKey}
+                    placeholder={
+                      status.llm_api_key_configured
+                        ? ti("llmKeySetPlaceholder")
+                        : ti("llmKeyPlaceholder")
+                    }
+                    autoComplete="off"
+                    onChange={(e) => setLlmApiKey(e.target.value)}
+                    className={`${inputClass} w-56`}
+                  />
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
@@ -312,7 +467,10 @@ export function BillImportTile({
                   !minutesValid ||
                   !directoryValid ||
                   !urlValid ||
-                  ollamaModel === ""
+                  !llmUrlValid ||
+                  !imapPortValid ||
+                  !imapMinutesValid ||
+                  llmModel.trim() === ""
                 }
                 className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -334,6 +492,188 @@ export function BillImportTile({
                 {ti("ollamaUrlInvalid")}
               </p>
             )}
+            {!llmUrlValid && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {ti("llmUrlInvalid")}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-host"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("imapHostLabel")}
+                </label>
+                <input
+                  id="imap-host"
+                  value={imapHost}
+                  placeholder="imap.example.com"
+                  onChange={(e) => setImapHost(e.target.value)}
+                  className={`${inputClass} w-48`}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-port"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("imapPortLabel")}
+                </label>
+                <input
+                  id="imap-port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={imapPort}
+                  onChange={(e) => setImapPort(e.target.value)}
+                  className={`${inputClass} w-24`}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-user"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {status.imap_user
+                    ? ti("imapUserSetLabel", { user: status.imap_user })
+                    : ti("imapUserLabel")}
+                </label>
+                <input
+                  id="imap-user"
+                  value={imapUser}
+                  placeholder={ti("imapUserPlaceholder")}
+                  autoComplete="off"
+                  onChange={(e) => setImapUser(e.target.value)}
+                  className={`${inputClass} w-48`}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-password"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {status.imap_password_configured
+                    ? ti("imapPasswordSetLabel")
+                    : ti("imapPasswordLabel")}
+                </label>
+                <input
+                  id="imap-password"
+                  type="password"
+                  value={imapPassword}
+                  placeholder={
+                    status.imap_password_configured
+                      ? ti("imapPasswordSetPlaceholder")
+                      : ti("imapPasswordPlaceholder")
+                  }
+                  autoComplete="new-password"
+                  onChange={(e) => setImapPassword(e.target.value)}
+                  className={`${inputClass} w-48`}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-folder"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("imapFolderLabel")}
+                </label>
+                <div className="flex gap-2">
+                  {folders.length > 0 ? (
+                    <select
+                      id="imap-folder"
+                      value={imapFolder}
+                      onChange={(e) => setImapFolder(e.target.value)}
+                      className={`${inputClass} w-48`}
+                    >
+                      {!folders.includes(imapFolder) && (
+                        <option value={imapFolder}>{imapFolder}</option>
+                      )}
+                      {folders.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="imap-folder"
+                      value={imapFolder}
+                      onChange={(e) => setImapFolder(e.target.value)}
+                      className={`${inputClass} w-48`}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleLoadFolders}
+                    disabled={foldersLoading || busy !== null}
+                    title={ti("foldersButton")}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                  >
+                    {foldersLoading ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="imap-minutes"
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {ti("pollMinutesLabel")}
+                </label>
+                <input
+                  id="imap-minutes"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={imapPollMinutes}
+                  onChange={(e) => setImapPollMinutes(e.target.value)}
+                  className={`${inputClass} w-24`}
+                />
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-600 dark:text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={imapTls}
+                  onChange={(e) => setImapTls(e.target.checked)}
+                  className="h-4 w-4 rounded accent-blue-700"
+                />
+                {ti("imapTlsLabel")}
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-600 dark:text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={imapMarkRead}
+                  onChange={(e) => setImapMarkRead(e.target.checked)}
+                  className="h-4 w-4 rounded accent-blue-700"
+                />
+                {ti("imapMarkReadLabel")}
+              </label>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="imap-senders"
+                className="text-xs text-slate-500 dark:text-slate-400"
+              >
+                {ti("imapSendersLabel")}
+              </label>
+              <input
+                id="imap-senders"
+                value={imapSenders}
+                placeholder={ti("imapSendersPlaceholder")}
+                onChange={(e) => setImapSenders(e.target.value)}
+                className={`${inputClass} w-full`}
+              />
+            </div>
           </div>
 
           {status.last_error && (
@@ -360,7 +700,7 @@ export function BillImportTile({
             <button
               type="button"
               onClick={handleTest}
-              disabled={busy !== null || !status.ollama_configured}
+              disabled={busy !== null || !status.llm_configured}
               className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
             >
               {busy === "test" ? (
@@ -369,6 +709,19 @@ export function BillImportTile({
                 <Server size={13} />
               )}
               {ti("testButton")}
+            </button>
+            <button
+              type="button"
+              onClick={handleTestImap}
+              disabled={busy !== null || !status.imap_configured}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-blue-700 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+            >
+              {busy === "testImap" ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Server size={13} />
+              )}
+              {ti("imapTestButton")}
             </button>
             <button
               type="button"

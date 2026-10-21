@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 import httpx
+from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.services import app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,27 +27,27 @@ class DeliveryResult:
     source: NotificationChannel | None = None
 
 
-def apprise_configured() -> bool:
-    return settings.apprise_configured
+def apprise_configured(db: Session) -> bool:
+    return app_settings.apprise_configured(db)
 
 
-def any_channel_configured() -> bool:
-    return apprise_configured() or bool(settings.smtp_host)
+def any_channel_configured(db: Session) -> bool:
+    return apprise_configured(db) or app_settings.smtp_configured(db)
 
 
 def send_via_apprise(
-    *, title: str, body: str, notify_type: str = "info"
+    db: Session, *, title: str, body: str, notify_type: str = "info"
 ) -> DeliveryResult:
-    if not apprise_configured():
+    if not apprise_configured(db):
         return DeliveryResult(
             ok=False,
             error="apprise not configured",
             source=NotificationChannel.apprise,
         )
 
-    base_url = (settings.apprise_base_url or "").rstrip("/")
-    if settings.apprise_key:
-        url = f"{base_url}/notify/{settings.apprise_key}"
+    base_url = (app_settings.apprise_base_url(db) or "").rstrip("/")
+    if app_settings.apprise_key(db):
+        url = f"{base_url}/notify/{app_settings.apprise_key(db)}"
         payload: dict[str, str | None] = {
             "title": title,
             "body": body,
@@ -61,12 +62,12 @@ def send_via_apprise(
         }
         # Omit `urls` when unset so the gateway falls back to its own
         # APPRISE_STATELESS_URLS configuration.
-        if settings.apprise_urls:
-            payload["urls"] = settings.apprise_urls
+        if app_settings.apprise_urls(db):
+            payload["urls"] = app_settings.apprise_urls(db)
 
     try:
         response = httpx.post(
-            url, json=payload, timeout=settings.apprise_timeout_seconds
+            url, json=payload, timeout=app_settings.apprise_timeout(db)
         )
     except httpx.HTTPError as exc:
         return DeliveryResult(
@@ -83,6 +84,7 @@ def send_via_apprise(
 
 
 def deliver(
+    db: Session,
     *,
     title: str,
     body: str,
@@ -90,9 +92,9 @@ def deliver(
     email_sender: Callable[[], None],
 ) -> DeliveryResult:
     apprise_result: DeliveryResult | None = None
-    if apprise_configured():
+    if apprise_configured(db):
         apprise_result = send_via_apprise(
-            title=title, body=body, notify_type=notify_type
+            db, title=title, body=body, notify_type=notify_type
         )
         if apprise_result.ok:
             return apprise_result
@@ -101,7 +103,7 @@ def deliver(
             apprise_result.error,
         )
 
-    if settings.smtp_host:
+    if app_settings.smtp_configured(db):
         try:
             email_sender()
         except (smtplib.SMTPException, OSError) as exc:

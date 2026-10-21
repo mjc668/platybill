@@ -24,7 +24,10 @@ def _token_hash(raw: str) -> str:
 
 def test_smtp_status_unconfigured(client_db):
     client, _ = client_db
-    with patch("app.routers.auth.settings") as mock_settings:
+    with (
+        patch("app.services.app_settings.get_value", return_value=None),
+        patch("app.routers.auth.settings") as mock_settings,
+    ):
         mock_settings.smtp_host = None
         r = client.get("/auth/smtp-status")
     assert r.status_code == 200
@@ -33,8 +36,10 @@ def test_smtp_status_unconfigured(client_db):
 
 def test_smtp_status_configured(client_db):
     client, _ = client_db
-    with patch("app.routers.auth.settings") as mock_settings:
-        mock_settings.smtp_host = "smtp.example.com"
+    with patch(
+        "app.services.app_settings.get_value",
+        side_effect=lambda db, key: "smtp.example.com" if key == "smtp.host" else None,
+    ):
         r = client.get("/auth/smtp-status")
     assert r.status_code == 200
     assert r.json() == {"configured": True}
@@ -87,13 +92,19 @@ def test_forgot_password_reset_link_uses_url_fragment(client_db):
     with (
         patch("app.routers.auth.settings") as mock_settings,
         patch("app.routers.auth.send_password_reset_email") as mock_send,
+        patch("app.services.app_settings.smtp_configured", return_value=True),
+        patch(
+            "app.services.app_settings.smtp_kwargs",
+            return_value={
+                "smtp_host": "smtp.example.com",
+                "smtp_port": 587,
+                "smtp_user": None,
+                "smtp_password": None,
+                "smtp_use_tls": True,
+                "from_addr": "",
+            },
+        ),
     ):
-        mock_settings.smtp_host = "smtp.example.com"
-        mock_settings.smtp_port = 587
-        mock_settings.smtp_user = None
-        mock_settings.smtp_password = None
-        mock_settings.smtp_use_tls = True
-        mock_settings.reminder_from = ""
         mock_settings.app_base_url = "http://localhost:3010"
         mock_settings.password_reset_token_expire_minutes = 60
 

@@ -63,7 +63,7 @@ def _channels(
 # ---------------------------------------------------------------------------
 
 
-def test_send_via_apprise_stateless_payload():
+def test_send_via_apprise_stateless_payload(db_session):
     with (
         _channels(apprise_base_url=_APPRISE_BASE, apprise_urls=_APPRISE_URLS),
         patch(
@@ -71,7 +71,9 @@ def test_send_via_apprise_stateless_payload():
             return_value=httpx.Response(200, json={"success": True}),
         ) as mock_post,
     ):
-        result = send_via_apprise(title="T", body="B", notify_type="warning")
+        result = send_via_apprise(
+            db_session, title="T", body="B", notify_type="warning"
+        )
 
     assert result.ok is True
     assert result.channel == NotificationChannel.apprise
@@ -87,7 +89,7 @@ def test_send_via_apprise_stateless_payload():
     }
 
 
-def test_send_via_apprise_key_payload_omits_urls():
+def test_send_via_apprise_key_payload_omits_urls(db_session):
     with (
         _channels(
             apprise_base_url=_APPRISE_BASE,
@@ -99,7 +101,7 @@ def test_send_via_apprise_key_payload_omits_urls():
             return_value=httpx.Response(200),
         ) as mock_post,
     ):
-        result = send_via_apprise(title="T", body="B")
+        result = send_via_apprise(db_session, title="T", body="B")
 
     assert result.ok is True
     assert mock_post.call_args.args[0] == f"{_APPRISE_BASE}/notify/household"
@@ -108,7 +110,7 @@ def test_send_via_apprise_key_payload_omits_urls():
     assert payload["type"] == "info"
 
 
-def test_send_via_apprise_base_url_only_uses_gateway_config():
+def test_send_via_apprise_base_url_only_uses_gateway_config(db_session):
     """A gateway that holds its own targets needs only APPRISE_BASE_URL."""
     with (
         _channels(apprise_base_url=_APPRISE_BASE),
@@ -117,7 +119,7 @@ def test_send_via_apprise_base_url_only_uses_gateway_config():
             return_value=httpx.Response(200),
         ) as mock_post,
     ):
-        result = send_via_apprise(title="T", body="B")
+        result = send_via_apprise(db_session, title="T", body="B")
 
     assert result.ok is True
     assert mock_post.call_args.args[0] == f"{_APPRISE_BASE}/notify"
@@ -125,7 +127,7 @@ def test_send_via_apprise_base_url_only_uses_gateway_config():
     assert "urls" not in payload
 
 
-def test_send_via_apprise_error_includes_response_snippet():
+def test_send_via_apprise_error_includes_response_snippet(db_session):
     with (
         _channels(apprise_base_url=_APPRISE_BASE, apprise_urls=_APPRISE_URLS),
         patch(
@@ -133,7 +135,7 @@ def test_send_via_apprise_error_includes_response_snippet():
             return_value=httpx.Response(424, text="Failed to send to ntfy://topic"),
         ),
     ):
-        result = send_via_apprise(title="T", body="B")
+        result = send_via_apprise(db_session, title="T", body="B")
 
     assert result.ok is False
     assert result.error is not None
@@ -141,12 +143,12 @@ def test_send_via_apprise_error_includes_response_snippet():
     assert "ntfy://topic" in result.error
 
 
-def test_send_via_apprise_not_configured_does_not_call_httpx():
+def test_send_via_apprise_not_configured_does_not_call_httpx(db_session):
     with (
         _channels(),
         patch("app.services.notifications.httpx.post") as mock_post,
     ):
-        result = send_via_apprise(title="T", body="B")
+        result = send_via_apprise(db_session, title="T", body="B")
 
     assert result.ok is False
     assert result.channel is None
@@ -158,7 +160,7 @@ def test_send_via_apprise_not_configured_does_not_call_httpx():
 # ---------------------------------------------------------------------------
 
 
-def test_deliver_apprise_success_skips_email():
+def test_deliver_apprise_success_skips_email(db_session):
     email_sender = MagicMock()
     with (
         _channels(
@@ -171,7 +173,11 @@ def test_deliver_apprise_success_skips_email():
         ),
     ):
         result = deliver(
-            title="T", body="B", notify_type="info", email_sender=email_sender
+            db_session,
+            title="T",
+            body="B",
+            notify_type="info",
+            email_sender=email_sender,
         )
 
     assert result.ok is True
@@ -179,7 +185,7 @@ def test_deliver_apprise_success_skips_email():
     email_sender.assert_not_called()
 
 
-def test_deliver_apprise_http_error_falls_back_to_email():
+def test_deliver_apprise_http_error_falls_back_to_email(db_session):
     email_sender = MagicMock()
     with (
         _channels(
@@ -192,7 +198,11 @@ def test_deliver_apprise_http_error_falls_back_to_email():
         ),
     ):
         result = deliver(
-            title="T", body="B", notify_type="info", email_sender=email_sender
+            db_session,
+            title="T",
+            body="B",
+            notify_type="info",
+            email_sender=email_sender,
         )
 
     assert result.ok is True
@@ -201,7 +211,7 @@ def test_deliver_apprise_http_error_falls_back_to_email():
     email_sender.assert_called_once()
 
 
-def test_deliver_apprise_timeout_falls_back_to_email():
+def test_deliver_apprise_timeout_falls_back_to_email(db_session):
     email_sender = MagicMock()
     with (
         _channels(
@@ -215,7 +225,11 @@ def test_deliver_apprise_timeout_falls_back_to_email():
         ),
     ):
         result = deliver(
-            title="T", body="B", notify_type="info", email_sender=email_sender
+            db_session,
+            title="T",
+            body="B",
+            notify_type="info",
+            email_sender=email_sender,
         )
 
     assert result.ok is True
@@ -223,7 +237,7 @@ def test_deliver_apprise_timeout_falls_back_to_email():
     email_sender.assert_called_once()
 
 
-def test_deliver_apprise_failure_without_email_returns_error():
+def test_deliver_apprise_failure_without_email_returns_error(db_session):
     email_sender = MagicMock()
     with (
         _channels(
@@ -235,7 +249,11 @@ def test_deliver_apprise_failure_without_email_returns_error():
         ),
     ):
         result = deliver(
-            title="T", body="B", notify_type="info", email_sender=email_sender
+            db_session,
+            title="T",
+            body="B",
+            notify_type="info",
+            email_sender=email_sender,
         )
 
     assert result.ok is False
@@ -244,22 +262,28 @@ def test_deliver_apprise_failure_without_email_returns_error():
     email_sender.assert_not_called()
 
 
-def test_deliver_email_failure_returns_error():
+def test_deliver_email_failure_returns_error(db_session):
     def _boom() -> None:
         raise smtplib.SMTPException("connection refused")
 
     with _channels(smtp_host="smtp.test"):
-        result = deliver(title="T", body="B", notify_type="info", email_sender=_boom)
+        result = deliver(
+            db_session, title="T", body="B", notify_type="info", email_sender=_boom
+        )
 
     assert result.ok is False
     assert result.error == "connection refused"
 
 
-def test_deliver_no_channel_configured():
+def test_deliver_no_channel_configured(db_session):
     email_sender = MagicMock()
     with _channels():
         result = deliver(
-            title="T", body="B", notify_type="info", email_sender=email_sender
+            db_session,
+            title="T",
+            body="B",
+            notify_type="info",
+            email_sender=email_sender,
         )
 
     assert result.ok is False

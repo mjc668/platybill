@@ -602,13 +602,12 @@ def test_nuextract_uses_template_prompt_without_schema():
         EXTRACTION_SCHEMA,
         extract_from_image,
     )
-    from app.services.ollama import OllamaConfig
+    from app.services.llm import LlmConfig
 
-    config = OllamaConfig(
+    config = LlmConfig(
+        provider="ollama",
         base_url="http://ollama.test",
         model="numind/nuextract3:q4_k_m",
-        ocr_model="maternion/LightOnOCR-2:1b",
-        text_model="gemma4",
         timeout=60,
     )
     with patch(
@@ -623,13 +622,12 @@ def test_nuextract_uses_template_prompt_without_schema():
 
 def test_other_models_use_schema_prompt():
     from app.services.bill_extract import EXTRACTION_SCHEMA, extract_from_image
-    from app.services.ollama import OllamaConfig
+    from app.services.llm import LlmConfig
 
-    config = OllamaConfig(
+    config = LlmConfig(
+        provider="ollama",
         base_url="http://ollama.test",
         model="gemma4:latest",
-        ocr_model="maternion/LightOnOCR-2:1b",
-        text_model="gemma4",
         timeout=60,
     )
     with patch(
@@ -656,7 +654,7 @@ def test_thinking_field_fallback(monkeypatch):
     """Models that emit structured output in `thinking` are still parsed."""
     import httpx
 
-    from app.services.ollama import OllamaConfig, generate_json
+    from app.services.llm import LlmConfig, generate_json
 
     class FakeResponse:
         status_code = 200
@@ -668,11 +666,10 @@ def test_thinking_field_fallback(monkeypatch):
             }
 
     monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResponse())
-    config = OllamaConfig(
+    config = LlmConfig(
+        provider="ollama",
         base_url="http://ollama.test",
         model="qwen3-vl:8b",
-        ocr_model="x",
-        text_model="x",
         timeout=10,
     )
     result = generate_json(config=config, prompt="p")
@@ -681,13 +678,12 @@ def test_thinking_field_fallback(monkeypatch):
 
 def test_two_phase_uses_text_ocr_then_extracts():
     from app.services.bill_extract import _extract_image_two_phase
-    from app.services.ollama import OllamaConfig
+    from app.services.llm import LlmConfig
 
-    config = OllamaConfig(
+    config = LlmConfig(
+        provider="ollama",
         base_url="http://ollama.test",
         model="gemma4",
-        ocr_model="deepseek-ocr:3b",
-        text_model="gemma4",
         timeout=60,
     )
     with (
@@ -699,6 +695,6 @@ def test_two_phase_uses_text_ocr_then_extracts():
         ) as mock_json,
     ):
         result = _extract_image_two_phase(PNG, config=config)
-        assert mock_text.call_args.kwargs["model"] == "deepseek-ocr:3b"
-        assert mock_json.call_args.kwargs["model"] == "gemma4"
+        assert mock_text.call_count == 1
+        assert mock_json.call_count == 1
         assert result.amount == Decimal("87.30")

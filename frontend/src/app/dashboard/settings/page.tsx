@@ -12,6 +12,8 @@ import { Tile } from "@/components/settings/Tile";
 import { ProfileTile } from "@/components/settings/ProfileTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
+import { SmtpTile } from "@/components/settings/SmtpTile";
+import { AppriseTile } from "@/components/settings/AppriseTile";
 import { CategoriesTile } from "@/components/settings/CategoriesTile";
 import { BankAccountsTile } from "@/components/settings/BankAccountsTile";
 import { BillImportTile } from "@/components/settings/BillImportTile";
@@ -165,6 +167,10 @@ export default function SettingsPage() {
           onDirtyChange={onEmailDirty}
           t={t}
         />
+
+        <SmtpTile t={t} />
+
+        <AppriseTile t={t} />
 
         <BrowserNotificationsTile t={t} />
       </div>

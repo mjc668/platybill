@@ -27,7 +27,7 @@ from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
 from app.services import app_settings
 from app.services.bill_extract import ExtractedBill, extract_document, extract_from_text
-from app.services.ollama import OllamaUnavailable
+from app.services.llm import LlmUnavailable
 from app.services.payments import recalculate_instance
 from app.services.recurrence import _due_date_for_period
 
@@ -157,9 +157,9 @@ def import_document(
         is not None
     ):
         return None
-    config = app_settings.ollama_config(db)
+    config = app_settings.llm_config(db)
     if config is None:
-        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+        raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
     extracted = extract_document(
         data, config=config, content_type=content_type, filename=filename
     )
@@ -182,9 +182,9 @@ def import_text(
     filename: str | None,
     source: ImportSource,
 ) -> ImportDraft | None:
-    config = app_settings.ollama_config(db)
+    config = app_settings.llm_config(db)
     if config is None:
-        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+        raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
     extracted = extract_from_text(text, config=config)
     return create_draft(
         db,
@@ -403,9 +403,8 @@ def _message_drafts(
     """Create drafts from one raw email; returns (drafts, skipped) counts."""
     message: Message = email.message_from_bytes(raw)
     sender = parseaddr(message.get("From", ""))[1].lower()
-    if settings.imap_allowed_senders and sender not in {
-        s.lower() for s in settings.imap_allowed_senders
-    }:
+    allowed = app_settings.imap_allowed_senders(db)
+    if allowed and sender not in {s.lower() for s in allowed}:
         return [], 0
 
     message_id = message.get("Message-ID") or _hash(raw)
@@ -476,9 +475,9 @@ def _import_email_document(
         is not None
     ):
         return None
-    config = app_settings.ollama_config(db)
+    config = app_settings.llm_config(db)
     if config is None:
-        raise OllamaUnavailable("Ollama is not configured (set the URL in Settings)")
+        raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
     extracted = extract_document(
         payload, config=config, content_type=content_type, filename=filename
     )
@@ -494,7 +493,7 @@ def _import_email_document(
 
 def poll_email(db: Session) -> dict[str, Any]:
     """Process unseen messages in the configured IMAP folder once."""
-    if not settings.imap_configured:
+    if not app_settings.imap_configured(db):
         return {"processed": 0, "skipped": "IMAP is not configured"}
     user = resolve_import_user(db)
     if user is None:
@@ -503,23 +502,24 @@ def poll_email(db: Session) -> dict[str, Any]:
             "error": "Set IMPORT_USER_EMAIL (or have exactly one account) for polled imports",
         }
 
-    host = settings.imap_host or ""
-    password = (
-        settings.imap_password.get_secret_value() if settings.imap_password else ""
-    )
-    if settings.imap_tls:
+    host = app_settings.imap_host(db) or ""
+    port = app_settings.imap_port(db)
+    username = app_settings.imap_user(db) or ""
+    password = app_settings.imap_password(db) or ""
+    use_tls = app_settings.imap_tls(db)
+    folder = app_settings.imap_folder(db)
+    mark_read = app_settings.imap_mark_read(db)
+    if use_tls:
         connection: imaplib.IMAP4 = imaplib.IMAP4_SSL(
-            host, settings.imap_port, timeout=_IMAP_TIMEOUT_SECONDS
+            host, port, timeout=_IMAP_TIMEOUT_SECONDS
         )
     else:
-        connection = imaplib.IMAP4(
-            host, settings.imap_port, timeout=_IMAP_TIMEOUT_SECONDS
-        )
+        connection = imaplib.IMAP4(host, port, timeout=_IMAP_TIMEOUT_SECONDS)
 
     processed = skipped = failed = 0
     try:
-        connection.login(settings.imap_user or "", password)
-        connection.select(settings.imap_folder)
+        connection.login(username, password)
+        connection.select(folder)
         status, data = connection.search(None, "UNSEEN")
         if status != "OK":
             return {"processed": 0, "error": f"IMAP search failed: {status}"}
@@ -541,7 +541,7 @@ def poll_email(db: Session) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001 — per-message tolerance
                 logger.warning("Email import failed for message %s: %s", num, exc)
                 failed += 1
-            if settings.imap_mark_read:
+            if mark_read:
                 connection.store(num_str, "+FLAGS", "\\Seen")
     finally:
         try:
@@ -577,9 +577,9 @@ def poll_email_tick(db: Session, *, now: float | None = None) -> None:
     import time
 
     moment = time.monotonic() if now is None else now
-    if not settings.imap_configured:
+    if not app_settings.imap_configured(db):
         return
-    if not _due("email", settings.imap_poll_minutes, moment):
+    if not _due("email", app_settings.imap_poll_minutes(db), moment):
         return
     poll_email(db)
 

@@ -18,9 +18,10 @@ from app.schemas.imports import (
     ImportSettingsIn,
     ImportStatusOut,
     ScanNowOut,
+    TestImapOut,
     TestOllamaOut,
 )
-from app.services import app_settings, ollama
+from app.services import app_settings
 from app.services.bill_import import (
     ALLOWED_CONTENT_TYPES,
     confirm_draft,
@@ -30,6 +31,7 @@ from app.services.bill_import import (
     poll_email,
     resolve_import_user,
 )
+from app.services.llm import LlmError, LlmUnavailable
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -71,10 +73,10 @@ def upload_bill(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    if app_settings.ollama_config(db) is None:
+    if app_settings.llm_config(db) is None:
         raise HTTPException(
             status_code=503,
-            detail="Bill import is not configured (set the Ollama URL in Settings)",
+            detail="Bill import is not configured (set up an LLM provider in Settings)",
         )
     content_type = file.content_type
     if content_type and content_type not in ALLOWED_CONTENT_TYPES:
@@ -99,9 +101,9 @@ def upload_bill(
             content_type=content_type,
             source=ImportSource.upload,
         )
-    except ollama.OllamaUnavailable as exc:
+    except LlmUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ollama.OllamaError as exc:
+    except LlmError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -184,16 +186,21 @@ def discard_import_draft(
 
 
 def _status(db: Session, me: User) -> ImportStatusOut:
-    config = app_settings.ollama_config(db)
+    from app.services import llm as llm_client
+
+    # Legacy Ollama fields stay populated so old frontends keep working.
+    legacy = app_settings.ollama_config(db)
+    llm = app_settings.llm_config(db)
+    provider = app_settings.llm_provider(db)
     reachable = False
     model_available: bool | None = None
     available_models: list[str] = []
-    if config is not None:
+    if llm is not None:
         try:
-            available_models = ollama.list_models(base_url=config.base_url)
+            available_models = llm_client.list_models(config=llm)
             reachable = True
-            model_available = config.model in available_models
-        except ollama.OllamaError:
+            model_available = llm.model in available_models
+        except llm_client.LlmError:
             reachable = False
 
     pending_count = (
@@ -214,17 +221,29 @@ def _status(db: Session, me: User) -> ImportStatusOut:
         .first()
     )
     return ImportStatusOut(
-        ollama_configured=config is not None,
-        ollama_base_url=config.base_url if config is not None else None,
-        ollama_reachable=reachable,
-        ollama_model=config.model if config is not None else settings.ollama_model,
+        ollama_configured=legacy is not None,
+        ollama_base_url=legacy.base_url if legacy is not None else None,
+        ollama_reachable=reachable and provider == "ollama",
+        ollama_model=legacy.model if legacy is not None else settings.ollama_model,
         model_available=model_available,
         available_models=available_models,
+        llm_provider=provider,
+        llm_model=llm.model if llm is not None else app_settings.llm_model(db),
+        llm_base_url=llm.base_url if llm is not None else None,
+        llm_configured=llm is not None,
+        llm_api_key_configured=bool(app_settings.llm_api_key(db)),
         import_enabled=app_settings.import_enabled(db),
         import_dir=app_settings.import_dir(db),
         import_poll_minutes=app_settings.import_poll_minutes(db),
-        imap_configured=settings.imap_configured,
-        imap_user=_mask_email(settings.imap_user),
+        imap_configured=app_settings.imap_configured(db),
+        imap_user=_mask_email(app_settings.imap_user(db)),
+        imap_host=app_settings.imap_host(db),
+        imap_port=app_settings.imap_port(db),
+        imap_folder=app_settings.imap_folder(db),
+        imap_tls=app_settings.imap_tls(db),
+        imap_poll_minutes=app_settings.imap_poll_minutes(db),
+        imap_mark_read=app_settings.imap_mark_read(db),
+        imap_password_configured=bool(app_settings.imap_password(db)),
         pending_count=pending_count,
         last_error=last_failed.error if last_failed else None,
     )
@@ -277,6 +296,71 @@ def update_import_settings(
         if not model:
             raise HTTPException(status_code=422, detail="Model must not be empty")
         app_settings.set_value(db, app_settings.OLLAMA_MODEL_KEY, model)
+    if body.llm_provider is not None:
+        from app.services.llm import PROVIDERS
+
+        provider = body.llm_provider.strip().lower()
+        if provider not in PROVIDERS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown provider '{body.llm_provider}'",
+            )
+        app_settings.set_value(db, app_settings.LLM_PROVIDER_KEY, provider)
+    if body.llm_model is not None:
+        model = body.llm_model.strip()
+        if not model:
+            raise HTTPException(status_code=422, detail="Model must not be empty")
+        app_settings.set_value(db, app_settings.LLM_MODEL_KEY, model)
+    if body.llm_base_url is not None:
+        url = body.llm_base_url.strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=422, detail="URL must start with http:// or https://"
+            )
+        app_settings.set_value(db, app_settings.LLM_BASE_URL_KEY, url or None)
+    if body.llm_api_key is not None:
+        app_settings.set_value(
+            db, app_settings.LLM_API_KEY_KEY, body.llm_api_key or None
+        )
+    if body.llm_timeout_seconds is not None:
+        app_settings.set_value(
+            db, app_settings.LLM_TIMEOUT_KEY, str(body.llm_timeout_seconds)
+        )
+    if body.imap_host is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_HOST_KEY, body.imap_host.strip() or None
+        )
+    if body.imap_port is not None:
+        app_settings.set_value(db, app_settings.IMAP_PORT_KEY, str(body.imap_port))
+    if body.imap_user is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_USER_KEY, body.imap_user.strip() or None
+        )
+    if body.imap_password is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_PASSWORD_KEY, body.imap_password or None
+        )
+    if body.imap_folder is not None:
+        folder = body.imap_folder.strip()
+        if not folder:
+            raise HTTPException(status_code=422, detail="Folder must not be empty")
+        app_settings.set_value(db, app_settings.IMAP_FOLDER_KEY, folder)
+    if body.imap_tls is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_TLS_KEY, "1" if body.imap_tls else "0"
+        )
+    if body.imap_poll_minutes is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_POLL_MINUTES_KEY, str(body.imap_poll_minutes)
+        )
+    if body.imap_mark_read is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_MARK_READ_KEY, "1" if body.imap_mark_read else "0"
+        )
+    if body.imap_allowed_senders is not None:
+        app_settings.set_value(
+            db, app_settings.IMAP_ALLOWED_SENDERS_KEY, body.imap_allowed_senders
+        )
     return _status(db, me)
 
 
@@ -285,17 +369,19 @@ def test_ollama(
     db: Session = Depends(get_db),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    config = app_settings.ollama_config(db)
+    from app.services import llm as llm_client
+
+    config = app_settings.llm_config(db)
     if config is None:
         return TestOllamaOut(
             ok=False,
-            model=settings.ollama_model,
+            model=app_settings.llm_model(db),
             model_available=False,
-            error="Ollama is not configured (set the URL in Settings)",
+            error="No LLM provider is configured (set one up in Settings)",
         )
     try:
-        models = ollama.list_models(base_url=config.base_url)
-    except ollama.OllamaError as exc:
+        models = llm_client.list_models(config=config)
+    except llm_client.LlmError as exc:
         return TestOllamaOut(
             ok=False,
             model=config.model,
@@ -307,6 +393,109 @@ def test_ollama(
         model=config.model,
         model_available=config.model in models,
     )
+
+
+@router.get("/imap-folders", response_model=list[str])
+def list_imap_folders(
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+    _rl: None = Depends(rate_limited_by_user("import")),
+):
+    """List mailbox folders via IMAP LIST (names only, no secrets echoed)."""
+    import imaplib
+
+    target = resolve_import_user(db)
+    if target is not None and target.id != me.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the import target account can change import settings",
+        )
+    if not app_settings.imap_configured(db):
+        raise HTTPException(status_code=400, detail="IMAP is not configured")
+    host = app_settings.imap_host(db) or ""
+    try:
+        if app_settings.imap_tls(db):
+            connection: imaplib.IMAP4 = imaplib.IMAP4_SSL(
+                host, app_settings.imap_port(db), timeout=15
+            )
+        else:
+            connection = imaplib.IMAP4(host, app_settings.imap_port(db), timeout=15)
+        try:
+            connection.login(
+                app_settings.imap_user(db) or "",
+                app_settings.imap_password(db) or "",
+            )
+            status, data = connection.list()
+            if status != "OK" or not data:
+                raise HTTPException(status_code=502, detail="IMAP LIST failed")
+            folders: list[str] = []
+            for entry in data:
+                raw = entry.decode() if isinstance(entry, bytes) else str(entry)
+                name = raw.split(' "/" ', 1)[-1].strip().strip('"')
+                if name:
+                    folders.append(name)
+            return sorted(set(folders))
+        finally:
+            try:
+                connection.logout()
+            except imaplib.IMAP4.error:  # pragma: no cover — best-effort close
+                pass
+    except HTTPException:
+        raise
+    except (imaplib.IMAP4.error, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"IMAP error: {exc}") from exc
+
+
+@router.post("/test-imap", response_model=TestImapOut)
+def test_imap(
+    db: Session = Depends(get_db),
+    me: User = Depends(current_user),
+    _rl: None = Depends(rate_limited_by_user("import")),
+):
+    """Verify IMAP login + folder selection; returns folder + unseen count."""
+    import imaplib
+
+    target = resolve_import_user(db)
+    if target is not None and target.id != me.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the import target account can change import settings",
+        )
+    if not app_settings.imap_configured(db):
+        return {"ok": False, "error": "IMAP is not configured"}
+    host = app_settings.imap_host(db) or ""
+    try:
+        if app_settings.imap_tls(db):
+            connection: imaplib.IMAP4 = imaplib.IMAP4_SSL(
+                host, app_settings.imap_port(db), timeout=15
+            )
+        else:
+            connection = imaplib.IMAP4(host, app_settings.imap_port(db), timeout=15)
+        try:
+            connection.login(
+                app_settings.imap_user(db) or "",
+                app_settings.imap_password(db) or "",
+            )
+            status, _ = connection.select(app_settings.imap_folder(db))
+            if status != "OK":
+                return {
+                    "ok": False,
+                    "error": f"Cannot select folder '{app_settings.imap_folder(db)}'",
+                }
+            status, data = connection.search(None, "UNSEEN")
+            unseen = len((data[0] or b"").split()) if status == "OK" else 0
+            return {
+                "ok": True,
+                "folder": app_settings.imap_folder(db),
+                "unseen": unseen,
+            }
+        finally:
+            try:
+                connection.logout()
+            except imaplib.IMAP4.error:  # pragma: no cover — best-effort close
+                pass
+    except (imaplib.IMAP4.error, OSError) as exc:
+        return {"ok": False, "error": f"IMAP error: {exc}"}
 
 
 @router.post("/scan-now", response_model=ScanNowOut)

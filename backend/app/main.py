@@ -13,7 +13,16 @@ logging.getLogger("app").setLevel(logging.INFO)
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.routers import auth, bank_accounts, bills, categories, export, imports, stats
+from app.routers import (
+    auth,
+    bank_accounts,
+    bills,
+    categories,
+    export,
+    imports,
+    notifications,
+    stats,
+)
 from app.services.bill_import import poll_directory_tick, poll_email_tick
 from app.services.reminder_job import send_catchup_reminders, send_daily_reminders
 from app.services.snapshot_cleanup import cleanup_old_snapshots
@@ -80,6 +89,7 @@ app.include_router(categories.router)
 app.include_router(export.router)
 app.include_router(stats.router)
 app.include_router(imports.router)
+app.include_router(notifications.router)
 
 
 @app.middleware("http")

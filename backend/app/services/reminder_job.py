@@ -9,7 +9,7 @@ from app.core.logging_utils import mask_email
 from app.core.timezones import user_now, user_today
 from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
 from app.models.user import User
-from app.services import notifications
+from app.services import app_settings, notifications
 from app.services.email import (
     build_monthly_summary_text,
     build_reminder_text,
@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 def _is_blocked_domain(email: str) -> bool:
     domain = email.split("@")[-1].lower()
     return domain in {d.lower() for d in settings.email_blocked_domains}
+
+
+def _smtp_kwargs(db: Session) -> dict:
+    """Effective SMTP connection kwargs (DB override → env)."""
+    return app_settings.smtp_kwargs(db)
 
 
 _MONTH_NAMES: dict[str, list[str]] = {
@@ -83,7 +88,7 @@ def _month_label(month: str, lang: str) -> str:
 
 def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
     """Send monthly summary for a single user. Returns True on success."""
-    if not notifications.any_channel_configured():
+    if not notifications.any_channel_configured(db):
         return False
     if _is_blocked_domain(user.email):
         logger.debug(
@@ -142,20 +147,8 @@ def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
     )
 
     def _send_email() -> None:
-        smtp_host = settings.smtp_host
-        if smtp_host is None:
-            raise OSError("SMTP not configured")
         send_monthly_summary_email(
-            smtp_host=smtp_host,
-            smtp_port=settings.smtp_port,
-            smtp_user=settings.smtp_user,
-            smtp_password=(
-                settings.smtp_password.get_secret_value()
-                if settings.smtp_password
-                else None
-            ),
-            smtp_use_tls=settings.smtp_use_tls,
-            from_addr=settings.reminder_from or settings.smtp_user or "",
+            **_smtp_kwargs(db),
             to_addr=user.email,
             month_label=month_label,
             paid_rows=paid_rows,
@@ -164,6 +157,7 @@ def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
         )
 
     result = notifications.deliver(
+        db,
         title=title,
         body=body_text,
         notify_type="info",
@@ -269,7 +263,7 @@ def send_upcoming_digest_for_user(
     Archived, deleted and estimated instances stay out - the digest mirrors
     the Payments ledger.
     """
-    if not notifications.any_channel_configured():
+    if not notifications.any_channel_configured(db):
         return False
     if _is_blocked_domain(user.email):
         logger.debug(
@@ -319,20 +313,8 @@ def send_upcoming_digest_for_user(
     )
 
     def _send_email() -> None:
-        smtp_host = settings.smtp_host
-        if smtp_host is None:
-            raise OSError("SMTP not configured")
         send_upcoming_digest_email(
-            smtp_host=smtp_host,
-            smtp_port=settings.smtp_port,
-            smtp_user=settings.smtp_user,
-            smtp_password=(
-                settings.smtp_password.get_secret_value()
-                if settings.smtp_password
-                else None
-            ),
-            smtp_use_tls=settings.smtp_use_tls,
-            from_addr=settings.reminder_from or settings.smtp_user or "",
+            **_smtp_kwargs(db),
             to_addr=user.email,
             days=days,
             overdue_rows=overdue_rows,
@@ -341,6 +323,7 @@ def send_upcoming_digest_for_user(
         )
 
     result = notifications.deliver(
+        db,
         title=title,
         body=body_text,
         notify_type="info",
@@ -407,14 +390,14 @@ def _send_due_digests(
 def send_daily_reminders(
     SessionLocal: sessionmaker, send_minute: int | None = None
 ) -> None:
-    if not notifications.any_channel_configured():
-        logger.warning("Reminder job: no notification channel configured, skipping")
-        return
-
     now_utc = datetime.now(timezone.utc)
     logger.info("Reminder job started (UTC now=%s)", now_utc.isoformat())
 
     db: Session = SessionLocal()
+    if not notifications.any_channel_configured(db):
+        logger.warning("Reminder job: no notification channel configured, skipping")
+        db.close()
+        return
     sent = 0
     try:
         users = (
@@ -482,16 +465,16 @@ def send_catchup_reminders(
     SessionLocal: sessionmaker, send_minute: int | None = None
 ) -> None:
     """Run on startup: send reminders for all users whose scheduled time has already passed today."""
-    if not notifications.any_channel_configured():
-        logger.warning(
-            "Catch-up reminders: no notification channel configured, skipping"
-        )
-        return
-
     now_utc = datetime.now(timezone.utc)
     logger.info("Catch-up reminders started (UTC now=%s)", now_utc.isoformat())
 
     db: Session = SessionLocal()
+    if not notifications.any_channel_configured(db):
+        logger.warning(
+            "Catch-up reminders: no notification channel configured, skipping"
+        )
+        db.close()
+        return
     sent = 0
     try:
         users = (
@@ -575,20 +558,8 @@ def _send_and_flag(
     )
 
     def _send_email() -> None:
-        smtp_host = settings.smtp_host
-        if smtp_host is None:
-            raise OSError("SMTP not configured")
         send_reminder_email(
-            smtp_host=smtp_host,
-            smtp_port=settings.smtp_port,
-            smtp_user=settings.smtp_user,
-            smtp_password=(
-                settings.smtp_password.get_secret_value()
-                if settings.smtp_password
-                else None
-            ),
-            smtp_use_tls=settings.smtp_use_tls,
-            from_addr=settings.reminder_from or settings.smtp_user or "",
+            **_smtp_kwargs(db),
             to_addr=user.email,
             bill_name=bill_name,
             due_date=instance.due_date,
@@ -599,6 +570,7 @@ def _send_and_flag(
         )
 
     result = notifications.deliver(
+        db,
         title=title,
         body=body_text,
         notify_type="warning",

@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     ollama_ocr_model: str = "maternion/LightOnOCR-2:1b"
     ollama_text_model: str = "gemma4"
     ollama_timeout_seconds: float = 120.0
+    # LLM provider: ollama | openai | anthropic | google | opencode
+    # (OpenAI-compatible endpoint). DB keys (llm.*) override these.
+    llm_provider: str = "ollama"
+    llm_model: str = "gemma4"
+    llm_base_url: str | None = None
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = 120.0
     import_dir: str = "/data/import"
     import_poll_minutes: int = 15
     import_max_file_mb: int = 15

@@ -51,6 +51,20 @@ class ImportSettingsIn(BaseModel):
     poll_minutes: int | None = Field(None, ge=1, le=1440)
     ollama_base_url: str | None = Field(None, max_length=255)
     ollama_model: str | None = Field(None, max_length=255)
+    llm_provider: str | None = Field(None, max_length=20)
+    llm_model: str | None = Field(None, max_length=255)
+    llm_base_url: str | None = Field(None, max_length=255)
+    llm_api_key: str | None = Field(None, max_length=500)
+    llm_timeout_seconds: float | None = Field(None, ge=1, le=600)
+    imap_host: str | None = Field(None, max_length=255)
+    imap_port: int | None = Field(None, ge=1, le=65535)
+    imap_user: str | None = Field(None, max_length=255)
+    imap_password: str | None = Field(None, max_length=500)
+    imap_folder: str | None = Field(None, max_length=255)
+    imap_tls: bool | None = None
+    imap_poll_minutes: int | None = Field(None, ge=1, le=1440)
+    imap_mark_read: bool | None = None
+    imap_allowed_senders: str | None = Field(None, max_length=2000)
 
 
 class ImportStatusOut(BaseModel):
@@ -60,11 +74,23 @@ class ImportStatusOut(BaseModel):
     ollama_model: str
     model_available: bool | None
     available_models: list[str] = []
+    llm_provider: str
+    llm_model: str
+    llm_base_url: str | None
+    llm_configured: bool
+    llm_api_key_configured: bool
     import_enabled: bool
     import_dir: str
     import_poll_minutes: int
     imap_configured: bool
     imap_user: str | None
+    imap_host: str | None
+    imap_port: int
+    imap_folder: str
+    imap_tls: bool
+    imap_poll_minutes: int
+    imap_mark_read: bool
+    imap_password_configured: bool
     pending_count: int
     last_error: str | None
 
@@ -73,6 +99,13 @@ class TestOllamaOut(BaseModel):
     ok: bool
     model: str
     model_available: bool
+    error: str | None = None
+
+
+class TestImapOut(BaseModel):
+    ok: bool
+    folder: str | None = None
+    unseen: int | None = None
     error: str | None = None
 
 

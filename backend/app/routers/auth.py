@@ -39,7 +39,7 @@ from app.schemas.auth import (
     UserProfileOut,
     UserProfileUpdate,
 )
-from app.services import notifications
+from app.services import app_settings, notifications
 from app.services.categories import ensure_default_categories
 from app.services.email import send_password_reset_email, send_test_email
 from app.services.reminder_job import (
@@ -210,7 +210,7 @@ def send_notification_now(
     _rl: None = Depends(rate_limited_by_user("send_now")),
     db: Session = Depends(get_db),
 ):
-    if not notifications.any_channel_configured():
+    if not notifications.any_channel_configured(db):
         raise HTTPException(
             status_code=400, detail="No notification channel configured"
         )
@@ -226,7 +226,7 @@ def send_monthly_summary_now(
     _rl: None = Depends(rate_limited_by_user("send_now")),
     db: Session = Depends(get_db),
 ):
-    if not notifications.any_channel_configured():
+    if not notifications.any_channel_configured(db):
         raise HTTPException(
             status_code=400, detail="No notification channel configured"
         )
@@ -266,15 +266,15 @@ def change_email(
 
 
 @router.get("/smtp-status", response_model=SmtpStatusResponse)
-def smtp_status():
-    return SmtpStatusResponse(configured=settings.smtp_host is not None)
+def smtp_status(db: Session = Depends(get_db)):
+    return SmtpStatusResponse(configured=app_settings.smtp_configured(db))
 
 
 @router.get("/notification-status", response_model=NotificationStatusResponse)
-def notification_status(_: User = Depends(current_user)):
+def notification_status(_: User = Depends(current_user), db: Session = Depends(get_db)):
     return NotificationStatusResponse(
-        smtp_configured=settings.smtp_host is not None,
-        apprise_configured=notifications.apprise_configured(),
+        smtp_configured=app_settings.smtp_configured(db),
+        apprise_configured=notifications.apprise_configured(db),
     )
 
 
@@ -282,27 +282,17 @@ def notification_status(_: User = Depends(current_user)):
 def send_test_notification(
     user: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("send_now")),
+    db: Session = Depends(get_db),
 ):
     def _send_email() -> None:
-        smtp_host = settings.smtp_host
-        if smtp_host is None:
-            raise OSError("SMTP not configured")
         send_test_email(
-            smtp_host=smtp_host,
-            smtp_port=settings.smtp_port,
-            smtp_user=settings.smtp_user,
-            smtp_password=(
-                settings.smtp_password.get_secret_value()
-                if settings.smtp_password
-                else None
-            ),
-            smtp_use_tls=settings.smtp_use_tls,
-            from_addr=settings.reminder_from or settings.smtp_user or "",
+            **app_settings.smtp_kwargs(db),
             to_addr=user.email,
             language=user.language_preference or "en",
         )
 
     result = notifications.deliver(
+        db,
         title=_TEST_NOTIFICATION_TITLE,
         body=_TEST_NOTIFICATION_BODY,
         notify_type="success",
@@ -363,22 +353,13 @@ def forgot_password(
     )
     db.commit()
 
-    if settings.smtp_host:
+    if app_settings.smtp_configured(db):
         # Token in the fragment: fragments are not sent in the request line or
         # Referer, so the raw token never reaches server/proxy logs.
         reset_url = f"{settings.app_base_url}/reset-password#token={raw_token}"
         try:
             send_password_reset_email(
-                smtp_host=settings.smtp_host,
-                smtp_port=settings.smtp_port,
-                smtp_user=settings.smtp_user,
-                smtp_password=(
-                    settings.smtp_password.get_secret_value()
-                    if settings.smtp_password
-                    else None
-                ),
-                smtp_use_tls=settings.smtp_use_tls,
-                from_addr=settings.reminder_from or "",
+                **app_settings.smtp_kwargs(db),
                 to_addr=user.email,
                 reset_url=reset_url,
                 language=user.language_preference or "en",
