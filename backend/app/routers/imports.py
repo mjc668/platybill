@@ -425,8 +425,8 @@ def list_imap_folders(
                 app_settings.imap_user(db) or "",
                 app_settings.imap_password(db) or "",
             )
-            status, data = connection.list()
-            if status != "OK" or not data:
+            ok, data = connection.list()
+            if ok != "OK" or not data:
                 raise HTTPException(status_code=502, detail="IMAP LIST failed")
             folders: list[str] = []
             for entry in data:
@@ -476,14 +476,14 @@ def test_imap(
                 app_settings.imap_user(db) or "",
                 app_settings.imap_password(db) or "",
             )
-            status, _ = connection.select(app_settings.imap_folder(db))
-            if status != "OK":
+            ok, _ = connection.select(app_settings.imap_folder(db))
+            if ok != "OK":
                 return {
                     "ok": False,
                     "error": f"Cannot select folder '{app_settings.imap_folder(db)}'",
                 }
-            status, data = connection.search(None, "UNSEEN")
-            unseen = len((data[0] or b"").split()) if status == "OK" else 0
+            ok, data = connection.search(None, "UNSEEN")
+            unseen = len((data[0] or b"").split()) if ok == "OK" else 0
             return {
                 "ok": True,
                 "folder": app_settings.imap_folder(db),
