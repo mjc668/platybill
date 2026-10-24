@@ -151,7 +151,7 @@ export default function DashboardLayout({
       </header>
 
       {/* Page content */}
-      <main className="flex-1 pb-20 pb-safe md:pb-6">{children}</main>
+      <main className="flex-1 pb-mobile-nav">{children}</main>
 
       {/* Mobile bottom navigation bar */}
       <BottomNav />

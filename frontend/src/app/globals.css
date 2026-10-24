@@ -13,6 +13,15 @@
   .mb-safe {
     margin-bottom: env(safe-area-inset-bottom, 0px);
   }
+  /* Extra bottom padding to clear the fixed mobile bottom navigation bar */
+  .pb-mobile-nav {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  @media (min-width: 768px) {
+    .pb-mobile-nav {
+      padding-bottom: 1.5rem;
+    }
+  }
 }
 
 html, body {
