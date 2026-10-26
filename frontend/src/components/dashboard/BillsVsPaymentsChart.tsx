@@ -10,8 +10,8 @@ interface Props {
 }
 
 const WIDTH = 600;
-const HEIGHT = 220;
-const PADDING = { top: 16, right: 12, bottom: 34, left: 52 };
+const HEIGHT = 240;
+const PADDING = { top: 16, right: 12, bottom: 56, left: 52 };
 
 function parseAmount(value: string): number {
   const parsed = parseFloat(value);
@@ -109,7 +109,7 @@ export default function BillsVsPaymentsChart({ trend, forecast, currency }: Prop
     <div>
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="w-full h-auto"
+        className="w-full h-auto overflow-visible"
         role="img"
         aria-label={t("trendAriaLabel")}
       >
@@ -207,18 +207,21 @@ export default function BillsVsPaymentsChart({ trend, forecast, currency }: Prop
         })}
 
         {/* X-axis month labels — rotated so all 12 fit on mobile widths */}
-        {slots.map((slot, index) => (
-          <text
-            key={`label-${index}-${slot.period}`}
-            x={slotCenter(index)}
-            y={HEIGHT - 8}
-            textAnchor="end"
-            transform={`rotate(-45 ${slotCenter(index)} ${HEIGHT - 8})`}
-            className="fill-slate-400 text-[11px] dark:fill-slate-500"
-          >
-            {formatMonth(slot.period)}
-          </text>
-        ))}
+        {slots.map((slot, index) => {
+          const labelY = bottom + 12;
+          return (
+            <text
+              key={`label-${index}-${slot.period}`}
+              x={slotCenter(index)}
+              y={labelY}
+              textAnchor="end"
+              transform={`rotate(-45 ${slotCenter(index)} ${labelY})`}
+              className="fill-slate-400 text-[11px] dark:fill-slate-500"
+            >
+              {formatMonth(slot.period)}
+            </text>
+          );
+        })}
       </svg>
 
       <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
