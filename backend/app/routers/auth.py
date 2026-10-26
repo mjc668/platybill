@@ -61,9 +61,7 @@ def _set_auth_cookie(
 ) -> None:
     """Set the JWT as an HttpOnly cookie plus a non-HttpOnly presence flag."""
     cookie_max_age = (
-        max_age
-        if max_age is not None
-        else (settings.access_token_expire_minutes * 60)
+        max_age if max_age is not None else (settings.access_token_expire_minutes * 60)
     )
     response.set_cookie(
         key="access_token",

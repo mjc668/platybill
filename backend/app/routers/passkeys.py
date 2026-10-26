@@ -62,9 +62,7 @@ def verify_registration(
         transports,
     ) = verify_registration_credential(user, body.response, request)
 
-    existing = (
-        db.query(Passkey).filter(Passkey.credential_id == credential_id).first()
-    )
+    existing = db.query(Passkey).filter(Passkey.credential_id == credential_id).first()
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -117,9 +115,7 @@ def verify_login(
             detail="Missing credential id in passkey response",
         )
 
-    passkey = (
-        db.query(Passkey).filter(Passkey.credential_id == credential_id).first()
-    )
+    passkey = db.query(Passkey).filter(Passkey.credential_id == credential_id).first()
     if passkey is None or not passkey.user or not passkey.user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

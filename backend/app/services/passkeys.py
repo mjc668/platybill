@@ -149,6 +149,17 @@ def generate_registration_options_for_user(
     return json.loads(webauthn.options_to_json(options))
 
 
+def _extract_challenge_key(client_data_json: bytes) -> str:
+    try:
+        data = json.loads(client_data_json.decode("utf-8"))
+        challenge = data.get("challenge")
+        if isinstance(challenge, str):
+            return challenge
+    except Exception:
+        pass
+    return ""
+
+
 def verify_registration_credential(
     user: User,
     credential_data: dict[str, Any],
@@ -163,7 +174,7 @@ def verify_registration_credential(
             detail=f"Invalid registration credential format: {exc}",
         ) from exc
 
-    challenge_key = bytes_to_base64url(credential.response.client_data.challenge)
+    challenge_key = _extract_challenge_key(credential.response.client_data_json)
     entry = challenge_cache.pop(challenge_key)
     if entry is None or entry.user_id != user.id:
         raise HTTPException(
@@ -229,7 +240,7 @@ def verify_login_credential(
             detail=f"Invalid authentication credential format: {exc}",
         ) from exc
 
-    challenge_key = bytes_to_base64url(credential.response.client_data.challenge)
+    challenge_key = _extract_challenge_key(credential.response.client_data_json)
     entry = challenge_cache.pop(challenge_key)
     if entry is None:
         raise HTTPException(

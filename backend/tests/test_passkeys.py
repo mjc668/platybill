@@ -39,7 +39,9 @@ def test_resolve_rp_id_and_origins():
             "origin": "https://my-platybill.domain.local:3010",
         },
         base_url="http://my-platybill.domain.local:3010/",
-        url=SimpleNamespace(scheme="http", hostname="my-platybill.domain.local", port=3010),
+        url=SimpleNamespace(
+            scheme="http", hostname="my-platybill.domain.local", port=3010
+        ),
     )
     rp_id = resolve_rp_id(req)  # type: ignore
     assert rp_id == "my-platybill.domain.local"
@@ -83,7 +85,13 @@ def test_register_verify_and_list_passkeys(client):
 
     with patch(
         "app.routers.passkeys.verify_registration_credential",
-        return_value=("cred-id-abc-123", b"pubkey-bytes", 0, "00000000-0000-0000-0000-000000000000", "[]"),
+        return_value=(
+            "cred-id-abc-123",
+            b"pubkey-bytes",
+            0,
+            "00000000-0000-0000-0000-000000000000",
+            "[]",
+        ),
     ):
         r = client.post(
             "/auth/passkeys/register/verify",
@@ -116,7 +124,13 @@ def test_register_verify_and_list_passkeys(client):
     # Registering the same credential again should return 409 Conflict
     with patch(
         "app.routers.passkeys.verify_registration_credential",
-        return_value=("cred-id-abc-123", b"pubkey-bytes", 0, "00000000-0000-0000-0000-000000000000", "[]"),
+        return_value=(
+            "cred-id-abc-123",
+            b"pubkey-bytes",
+            0,
+            "00000000-0000-0000-0000-000000000000",
+            "[]",
+        ),
     ):
         dup_res = client.post(
             "/auth/passkeys/register/verify",
@@ -134,7 +148,13 @@ def test_delete_passkey(client):
 
     with patch(
         "app.routers.passkeys.verify_registration_credential",
-        return_value=("cred-to-delete", b"pubkey-bytes", 0, "00000000-0000-0000-0000-000000000000", "[]"),
+        return_value=(
+            "cred-to-delete",
+            b"pubkey-bytes",
+            0,
+            "00000000-0000-0000-0000-000000000000",
+            "[]",
+        ),
     ):
         r = client.post(
             "/auth/passkeys/register/verify",
@@ -156,7 +176,9 @@ def test_delete_passkey(client):
     assert r.json() == []
 
     # Deleting again returns 404
-    assert client.delete(f"/auth/passkeys/{pk_id}", headers=auth(token)).status_code == 404
+    assert (
+        client.delete(f"/auth/passkeys/{pk_id}", headers=auth(token)).status_code == 404
+    )
 
 
 def test_cannot_delete_another_users_passkey(client):
@@ -165,7 +187,13 @@ def test_cannot_delete_another_users_passkey(client):
 
     with patch(
         "app.routers.passkeys.verify_registration_credential",
-        return_value=("cred-user-a", b"pubkey-bytes", 0, "00000000-0000-0000-0000-000000000000", "[]"),
+        return_value=(
+            "cred-user-a",
+            b"pubkey-bytes",
+            0,
+            "00000000-0000-0000-0000-000000000000",
+            "[]",
+        ),
     ):
         r = client.post(
             "/auth/passkeys/register/verify",
@@ -188,7 +216,13 @@ def test_passkey_login_flow(client):
 
     with patch(
         "app.routers.passkeys.verify_registration_credential",
-        return_value=("login-cred-123", b"pubkey-bytes", 0, "00000000-0000-0000-0000-000000000000", "[]"),
+        return_value=(
+            "login-cred-123",
+            b"pubkey-bytes",
+            0,
+            "00000000-0000-0000-0000-000000000000",
+            "[]",
+        ),
     ):
         client.post(
             "/auth/passkeys/register/verify",
@@ -231,7 +265,11 @@ def test_login_remember_me_cookie_persistence(client):
 
     res_short = client.post(
         "/auth/login",
-        json={"email": "remember@test.com", "password": _PASSWORD, "remember_me": False},
+        json={
+            "email": "remember@test.com",
+            "password": _PASSWORD,
+            "remember_me": False,
+        },
     )
     assert res_short.status_code == 200
 
