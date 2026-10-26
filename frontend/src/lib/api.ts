@@ -44,7 +44,12 @@ export class SessionExpiredError extends Error {
 
 // A 401 on this path is an expected outcome (bad credentials), not a
 // sign of an expired session, so it must not trigger auto-logout.
-const AUTH_401_EXEMPT_PATHS = ["/auth/login", "/auth/logout"];
+const AUTH_401_EXEMPT_PATHS = [
+  "/auth/login",
+  "/auth/logout",
+  "/auth/passkeys/login/options",
+  "/auth/passkeys/login/verify",
+];
 
 type SessionExpiredHandler = () => void;
 let sessionExpiredHandler: SessionExpiredHandler | null = null;

@@ -12,6 +12,7 @@
     "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
     "lucide-react": "^1.17.0",
     "next": "16.4.3",
     "next-intl": "^4.13.0",

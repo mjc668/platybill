@@ -21,6 +21,7 @@ from app.routers import (
     export,
     imports,
     notifications,
+    passkeys,
     stats,
 )
 from app.services.bill_import import poll_directory_tick, poll_email_tick
@@ -90,6 +91,7 @@ app.include_router(export.router)
 app.include_router(stats.router)
 app.include_router(imports.router)
 app.include_router(notifications.router)
+app.include_router(passkeys.router)
 
 
 @app.middleware("http")

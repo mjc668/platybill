@@ -23,6 +23,7 @@ dependencies = [
     "pypdfium2>=5.14.0",
     "pillow>=12.3.0",
     "tzdata>=2026.1",
+    "webauthn>=2.5.0",
 ]
 
 [dependency-groups]

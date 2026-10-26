@@ -1,16 +1,31 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, useSyncExternalStore, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { Fingerprint } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { apiFetch } from "@/lib/api";
+import { loginWithPasskey, browserSupportsWebAuthn } from "@/lib/passkeys-api";
 import { useAuth } from "@/context/auth-context";
 import { useNotifications } from "@/hooks/useNotifications";
 import { SESSION_EXPIRED_KEY } from "@/lib/auth";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+
+function subscribeNever() {
+  return () => {};
+}
+
+function getWebAuthnSnapshot(): boolean {
+  if (typeof window === "undefined") return false;
+  return browserSupportsWebAuthn();
+}
+
+function getWebAuthnServerSnapshot(): boolean {
+  return false;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +37,15 @@ export default function LoginPage() {
   // the hydration render can't disagree with the server HTML.
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [smtpConfigured, setSmtpConfigured] = useState(false);
+
+  const webAuthnSupported = useSyncExternalStore(
+    subscribeNever,
+    getWebAuthnSnapshot,
+    getWebAuthnServerSnapshot,
+  );
 
   useEffect(() => {
     // Two independent triggers for the session-expired banner: a client-side
@@ -65,7 +88,7 @@ export default function LoginPage() {
     try {
       await apiFetch<{ message: string }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, remember_me: rememberMe }),
       });
       login();
       void notifyDueToday();
@@ -74,6 +97,35 @@ export default function LoginPage() {
       setError(t("loginFailed"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handlePasskeyLogin() {
+    setError(null);
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setError(t("passkeyNotSupported"));
+      return;
+    }
+
+    setBiometricLoading(true);
+    try {
+      await loginWithPasskey(rememberMe);
+      login();
+      void notifyDueToday();
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        message.toLowerCase().includes("user canceled") ||
+        message.toLowerCase().includes("abort") ||
+        message.toLowerCase().includes("not allowed")
+      ) {
+        // User dismissed the biometric prompt
+      } else {
+        setError(message || t("loginFailed"));
+      }
+    } finally {
+      setBiometricLoading(false);
     }
   }
 
@@ -93,6 +145,30 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:bg-slate-800 dark:border-slate-700">
+          {webAuthnSupported && (
+            <div className="mb-5">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handlePasskeyLogin}
+                loading={biometricLoading}
+                className="w-full flex items-center justify-center gap-2 border-blue-200 bg-blue-50/60 text-blue-700 hover:bg-blue-100 hover:border-blue-300 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-900/40 py-2.5"
+              >
+                <Fingerprint size={18} className="text-blue-600 dark:text-blue-400" />
+                <span>{biometricLoading ? t("signingInWithPasskey") : t("signInWithPasskey")}</span>
+              </Button>
+
+              <div className="relative my-5 flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-200 dark:border-slate-700" />
+                </div>
+                <span className="relative bg-white px-2.5 text-xs uppercase tracking-wider text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+                  {t("or")}
+                </span>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <label
@@ -124,6 +200,18 @@ export default function LoginPage() {
                 required
                 autoComplete="current-password"
               />
+            </div>
+
+            <div className="flex items-center">
+              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 h-4 w-4"
+                />
+                <span>{t("rememberMe")}</span>
+              </label>
             </div>
 
             {error && (

@@ -19,6 +19,7 @@ import app.models.reset_token  # noqa: F401
 import app.models.restore_snapshot  # noqa: F401
 import app.models.import_draft  # noqa: F401
 import app.models.app_setting  # noqa: F401
+import app.models.passkey  # noqa: F401
 import app.models.user  # noqa: F401
 
 import pytest
@@ -46,6 +47,7 @@ for _scope in (
     "send_now",
     "restore",
     "import",
+    "passkey",
 ):
     setattr(_settings, f"{_scope}_rate_limit", 100000)
 

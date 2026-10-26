@@ -9,6 +9,11 @@
         "signIn": "Sign in",
         "signingIn": "Signing in…",
         "loginFailed": "Login failed",
+        "rememberMe": "Stay signed in (30 days)",
+        "or": "or",
+        "signInWithPasskey": "Sign in with Biometrics / Passkey",
+        "signingInWithPasskey": "Authenticating…",
+        "passkeyNotSupported": "Passkeys require a secure connection (HTTPS) and a supported browser.",
         "sessionExpired": "Your session expired. Please sign in again.",
         "noAccount": "No account?",
         "register": "Register",
@@ -549,6 +554,20 @@
             "timezoneHint": "Used for due dates, overdue detection and notification times.",
             "timezoneDefault": "Default (UTC)",
             "timezoneSaveFailed": "Failed to save the timezone."
+        },
+        "passkeys": {
+            "title": "Biometrics & Passkeys",
+            "description": "Log in with your fingerprint, face unlock, or device screen lock without typing a password.",
+            "registerButton": "Register this device",
+            "registering": "Registering…",
+            "keyNameLabel": "Device name (optional)",
+            "keyNamePlaceholder": "e.g. Pixel 8, iPhone 15, Laptop Touch ID",
+            "noPasskeys": "No passkeys registered yet. Register this device to sign in with your fingerprint or face.",
+            "deleteConfirm": "Remove this passkey? You will not be able to sign in with this device until re-registered.",
+            "registeredOn": "Added",
+            "lastUsed": "Last used",
+            "neverUsed": "Never used",
+            "notSecureWarning": "Passkeys require a secure context (HTTPS or localhost). If accessing via local IP over HTTP (e.g. http://192.168.x.x:3010), your browser disables WebAuthn biometrics. Use HTTPS or a secure tunnel to enable passkeys."
         },
         "emailNotifications": {
             "title": "Notifications",

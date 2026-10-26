@@ -76,9 +76,17 @@ def validate_password_strength(password: str) -> None:
         raise ValueError("Password is too common; pick something less predictable")
 
 
-def create_access_token(subject: str, *, token_version: int = 0) -> str:
+def create_access_token(
+    subject: str,
+    *,
+    token_version: int = 0,
+    expires_delta: timedelta | None = None,
+) -> str:
     now = datetime.now(timezone.utc)
-    expire = now + timedelta(minutes=settings.access_token_expire_minutes)
+    if expires_delta is not None:
+        expire = now + expires_delta
+    else:
+        expire = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": subject,
         "tv": token_version,

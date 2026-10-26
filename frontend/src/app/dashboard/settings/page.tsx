@@ -10,6 +10,7 @@ import RestoreButton from "@/components/RestoreButton";
 import SnapshotRecoverySection from "@/components/SnapshotRecoverySection";
 import { Tile } from "@/components/settings/Tile";
 import { ProfileTile } from "@/components/settings/ProfileTile";
+import { PasskeysTile } from "@/components/settings/PasskeysTile";
 import { InstallAppTile } from "@/components/settings/InstallAppTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
@@ -153,6 +154,7 @@ export default function SettingsPage() {
           onDirtyChange={onProfileDirty}
           t={t}
         />
+        <PasskeysTile t={t} />
         <InstallAppTile />
       </div>
 

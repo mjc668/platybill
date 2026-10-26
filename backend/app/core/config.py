@@ -40,10 +40,17 @@ class Settings(BaseSettings):
     send_now_rate_window_seconds: int = 3600
     restore_rate_limit: int = 5
     restore_rate_window_seconds: int = 3600
+    passkey_rate_limit: int = 20
+    passkey_rate_window_seconds: int = 300
 
     jwt_secret: SecretStr = SecretStr(_DEFAULT_JWT_SECRET)
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    remember_me_expire_days: int = 30
+
+    # WebAuthn (Passkeys / Biometrics)
+    webauthn_rp_id: str | None = None
+    webauthn_rp_name: str = "Platybill"
 
     # CORS — JSON array in env var, e.g. ALLOWED_ORIGINS=["https://app.example.com"]
     allowed_origins: list[str] = ["http://localhost:3010", "http://localhost:3000"]

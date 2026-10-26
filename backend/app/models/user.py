@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.bank_account import BankAccount
     from app.models.bill import BillTemplate
     from app.models.category import Category
+    from app.models.passkey import Passkey
 
 
 class User(Base):
@@ -92,5 +93,8 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     bank_accounts: Mapped[list[BankAccount]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    passkeys: Mapped[list[Passkey]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

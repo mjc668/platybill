@@ -56,8 +56,15 @@ _TEST_NOTIFICATION_BODY = (
 )
 
 
-def _set_auth_cookie(response: Response, token: str) -> None:
+def _set_auth_cookie(
+    response: Response, token: str, max_age: int | None = None
+) -> None:
     """Set the JWT as an HttpOnly cookie plus a non-HttpOnly presence flag."""
+    cookie_max_age = (
+        max_age
+        if max_age is not None
+        else (settings.access_token_expire_minutes * 60)
+    )
     response.set_cookie(
         key="access_token",
         value=token,
@@ -65,7 +72,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         samesite="lax",
         secure=settings.cookie_secure,
         path="/",
-        max_age=settings.access_token_expire_minutes * 60,
+        max_age=cookie_max_age,
     )
     # Non-HttpOnly presence flag so the frontend can detect login state without XSS risk.
     response.set_cookie(
@@ -75,7 +82,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         samesite="lax",
         secure=settings.cookie_secure,
         path="/",
-        max_age=settings.access_token_expire_minutes * 60,
+        max_age=cookie_max_age,
     )
 
 
@@ -129,8 +136,18 @@ def login(
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(str(user.id), token_version=user.token_version)
-    _set_auth_cookie(response, token)
+    if body.remember_me:
+        expires_delta = timedelta(days=settings.remember_me_expire_days)
+        max_age = settings.remember_me_expire_days * 86400
+    else:
+        expires_delta = None
+        max_age = settings.access_token_expire_minutes * 60
+    token = create_access_token(
+        str(user.id),
+        token_version=user.token_version,
+        expires_delta=expires_delta,
+    )
+    _set_auth_cookie(response, token, max_age=max_age)
     return MessageResponse(message="Logged in.")
 
 
