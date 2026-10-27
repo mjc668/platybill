@@ -8,25 +8,25 @@ import { useLocale } from "next-intl";
 interface Props {
   month: number; // 1–12
   day: number;
+  year?: number;
   onChange: (month: number, day: number) => void;
 }
 
-// 2024 is a leap year — Feb has 29 days, all other months correct
-const REF_YEAR = 2024;
-
-function daysInMonth(month: number): number {
-  return new Date(REF_YEAR, month, 0).getDate();
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
 }
 
 // Monday-first offset (0=Mon … 6=Sun)
-function firstDayOffset(month: number): number {
-  const jsDay = new Date(REF_YEAR, month - 1, 1).getDay(); // 0=Sun
+function firstDayOffset(year: number, month: number): number {
+  const jsDay = new Date(year, month - 1, 1).getDay(); // 0=Sun
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
-export default function MonthDayCalendar({ month, day, onChange }: Props) {
+export default function MonthDayCalendar({ month, day, year, onChange }: Props) {
   const locale = useLocale();
+  const currentYear = year ?? new Date().getFullYear();
   const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState(currentYear);
   const [viewMonth, setViewMonth] = useState(month);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -36,8 +36,10 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
     if (!open) return;
     function onMouseDown(e: MouseEvent) {
       if (
-        containerRef.current && !containerRef.current.contains(e.target as Node) &&
-        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        triggerRef.current &&
+        !triggerRef.current.contains(e.target as Node)
       )
         setOpen(false);
     }
@@ -53,10 +55,22 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
   }, [open]);
 
   function prevMonth() {
-    setViewMonth((m) => (m === 1 ? 12 : m - 1));
+    setViewMonth((m) => {
+      if (m === 1) {
+        setViewYear((y) => y - 1);
+        return 12;
+      }
+      return m - 1;
+    });
   }
   function nextMonth() {
-    setViewMonth((m) => (m === 12 ? 1 : m + 1));
+    setViewMonth((m) => {
+      if (m === 12) {
+        setViewYear((y) => y + 1);
+        return 1;
+      }
+      return m + 1;
+    });
   }
 
   function handleSelectDay(d: number) {
@@ -64,25 +78,25 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
     setOpen(false);
   }
 
-  const fmt = (m: number) =>
-    new Intl.DateTimeFormat(locale, { month: "long" }).format(
-      new Date(REF_YEAR, m - 1, 1),
+  const fmt = (y: number, m: number) =>
+    new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(
+      new Date(y, m - 1, 1),
     );
 
   const triggerLabel = new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "long",
-  }).format(new Date(REF_YEAR, month - 1, day));
+  }).format(new Date(viewYear, month - 1, day));
 
-  // Short weekday headers starting Monday
+  // Short weekday headers starting Monday (Jan 1 2024 = Monday)
   const weekdayHeaders = Array.from({ length: 7 }, (_, i) =>
     new Intl.DateTimeFormat(locale, { weekday: "short" })
-      .format(new Date(REF_YEAR, 0, 6 + i)) // Jan 6 2024 = Monday
+      .format(new Date(2024, 0, 1 + i))
       .slice(0, 2),
   );
 
-  const maxDay = daysInMonth(viewMonth);
-  const offset = firstDayOffset(viewMonth);
+  const maxDay = daysInMonth(viewYear, viewMonth);
+  const offset = firstDayOffset(viewYear, viewMonth);
 
   function handleOpen() {
     if (!triggerRef.current) return;
@@ -94,11 +108,24 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
     setPopupStyle(
       openUpward
-        ? { position: "fixed", bottom: window.innerHeight - rect.top + 6, left, width: popupWidth, zIndex: 9999 }
-        : { position: "fixed", top: rect.bottom + 6, left, width: popupWidth, zIndex: 9999 }
+        ? {
+            position: "fixed",
+            bottom: window.innerHeight - rect.top + 6,
+            left,
+            width: popupWidth,
+            zIndex: 9999,
+          }
+        : {
+            position: "fixed",
+            top: rect.bottom + 6,
+            left,
+            width: popupWidth,
+            zIndex: 9999,
+          },
     );
     setViewMonth(month);
-    setOpen((o) => !o);
+    setViewYear(year ?? new Date().getFullYear());
+    setOpen(true);
   }
 
   return (
@@ -115,67 +142,72 @@ export default function MonthDayCalendar({ month, day, onChange }: Props) {
         <span className="capitalize">{triggerLabel}</span>
       </button>
 
-      {open && createPortal(
-        <div ref={containerRef} style={popupStyle} className="rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-600 dark:bg-slate-800">
-          {/* Month navigation */}
-          <div className="mb-2 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={prevMonth}
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 capitalize">
-              {fmt(viewMonth)}
-            </span>
-            <button
-              type="button"
-              onClick={nextMonth}
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-
-          {/* Weekday headers */}
-          <div className="mb-1 grid grid-cols-7">
-            {weekdayHeaders.map((wd, i) => (
-              <div
-                key={i}
-                className="flex h-7 items-center justify-center text-xs font-medium text-slate-400 dark:text-slate-500 capitalize"
+      {open &&
+        createPortal(
+          <div
+            ref={containerRef}
+            style={popupStyle}
+            className="rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-600 dark:bg-slate-800"
+          >
+            {/* Month & Year navigation */}
+            <div className="mb-2 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={prevMonth}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
-                {wd}
-              </div>
-            ))}
-          </div>
+                <ChevronLeft size={16} />
+              </button>
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 capitalize">
+                {fmt(viewYear, viewMonth)}
+              </span>
+              <button
+                type="button"
+                onClick={nextMonth}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
 
-          {/* Day grid */}
-          <div className="grid grid-cols-7 gap-0.5">
-            {Array.from({ length: offset }).map((_, i) => (
-              <div key={`gap-${i}`} />
-            ))}
-            {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => {
-              const selected = d === day && viewMonth === month;
-              return (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => handleSelectDay(d)}
-                  className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors ${
-                    selected
-                      ? "bg-blue-700 font-semibold text-white"
-                      : "text-slate-700 hover:bg-blue-50 hover:text-blue-800 dark:text-slate-300 dark:hover:bg-blue-900/30 dark:hover:text-blue-300"
-                  }`}
+            {/* Weekday headers */}
+            <div className="mb-1 grid grid-cols-7">
+              {weekdayHeaders.map((wd, i) => (
+                <div
+                  key={i}
+                  className="flex h-7 items-center justify-center text-xs font-medium text-slate-400 dark:text-slate-500 capitalize"
                 >
-                  {d}
-                </button>
-              );
-            })}
-          </div>
-        </div>,
-        document.body
-      )}
+                  {wd}
+                </div>
+              ))}
+            </div>
+
+            {/* Day grid */}
+            <div className="grid grid-cols-7 gap-0.5">
+              {Array.from({ length: offset }).map((_, i) => (
+                <div key={`gap-${i}`} />
+              ))}
+              {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => {
+                const selected = d === day && viewMonth === month;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => handleSelectDay(d)}
+                    className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-colors ${
+                      selected
+                        ? "bg-blue-700 font-semibold text-white"
+                        : "text-slate-700 hover:bg-blue-50 hover:text-blue-800 dark:text-slate-300 dark:hover:bg-blue-900/30 dark:hover:text-blue-300"
+                    }`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
