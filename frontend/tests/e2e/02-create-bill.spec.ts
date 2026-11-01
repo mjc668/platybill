@@ -40,5 +40,5 @@ test('created bill appears in current month payments', async ({ page }) => {
   await page.goto('/dashboard/payments');
 
   // Assert: bill name visible in the current month's payment list
-  await expect(page.getByText(billName)).toBeVisible();
+  await expect(page.getByText(billName).first()).toBeVisible();
 });
