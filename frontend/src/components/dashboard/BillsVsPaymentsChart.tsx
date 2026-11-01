@@ -197,9 +197,8 @@ export default function BillsVsPaymentsChart({ trend, forecast, currency }: Prop
               height={barHeight(expected)}
               rx={2}
               fill="none"
-              stroke="currentColor"
+              stroke="#dfa90c"
               strokeWidth={2}
-              className="text-amber-500"
             >
               <title>{tooltip(point.period, t("trendForecast"), expected)}</title>
             </rect>
@@ -237,7 +236,7 @@ export default function BillsVsPaymentsChart({ trend, forecast, currency }: Prop
           data-testid="trend-legend-forecast"
           className="flex items-center gap-1.5"
         >
-          <span className="h-2.5 w-2.5 rounded-sm border-2 border-amber-500" />
+          <span className="h-2.5 w-2.5 rounded-sm border-2 border-[#dfa90c]" />
           {t("trendForecast")}
         </span>
       </div>

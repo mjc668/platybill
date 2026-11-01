@@ -3,6 +3,14 @@
 /* Class-based dark mode for Tailwind v4 */
 @custom-variant dark (&:is(.dark *));
 
+@theme {
+  --color-brand-gold: #dfa90c;
+  --color-brand-gold-hover: #c69207;
+  --color-brand-charcoal: #2f2f30;
+  --color-brand-blue: #1d4ed8;
+  --color-brand-blue-hover: #1e40af;
+}
+
 @layer utilities {
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -37,7 +45,7 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
-/* Green scrollbars (Webkit) */
+/* Subtle, theme-harmonious scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -46,15 +54,25 @@ button:not(:disabled) {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: #059669;
+  background-color: #94a3b8;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #047857;
+  background-color: #64748b;
 }
 
-/* Green scrollbars (Firefox) */
+:is(.dark) ::-webkit-scrollbar-thumb {
+  background-color: #475569;
+}
+:is(.dark) ::-webkit-scrollbar-thumb:hover {
+  background-color: #64748b;
+}
+
+/* Firefox */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #059669 transparent;
+  scrollbar-color: #94a3b8 transparent;
+}
+:is(.dark) * {
+  scrollbar-color: #475569 transparent;
 }

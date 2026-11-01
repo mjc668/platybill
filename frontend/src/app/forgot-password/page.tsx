@@ -47,8 +47,10 @@ export default function ForgotPasswordPage() {
             priority
           />
           <Image src="/platybill-logo.png" alt="Platybill" width={104} height={104} className="hidden rounded-2xl shadow-md dark:block" priority />
-          <h1 className="text-2xl tracking-tight text-blue-700 dark:text-blue-500">
-            <span className="font-normal">Platy</span><span className="font-bold">bill</span>
+          <h1 className="text-2xl tracking-tight">
+            <span className="font-normal text-slate-800 dark:text-slate-100">Platy</span>
+            <span className="font-bold text-blue-600 dark:text-blue-400">bill</span>
+            <span className="inline-block w-2 h-2 rounded-full bg-[#dfa90c] ml-1 align-baseline" />
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {t("forgotPasswordTitle")}

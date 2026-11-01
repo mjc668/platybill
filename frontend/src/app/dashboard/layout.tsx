@@ -67,12 +67,14 @@ export default function DashboardLayout({
           {/* Brand */}
           <Link
             href="/dashboard"
-            className="flex items-center gap-2 text-blue-700 transition-opacity hover:opacity-80 dark:text-blue-500"
+            className="flex items-center gap-2.5 text-blue-700 transition-opacity hover:opacity-85 dark:text-blue-400 group"
           >
-            <Image src="/platybill-logo-light.png" alt="Platybill" width={32} height={32} className="rounded-xl dark:hidden" />
-            <Image src="/platybill-logo.png" alt="Platybill" width={32} height={32} className="hidden rounded-xl dark:block" />
+            <Image src="/platybill-logo-light.png" alt="Platybill" width={32} height={32} className="rounded-xl shadow-xs dark:hidden" />
+            <Image src="/platybill-logo.png" alt="Platybill" width={32} height={32} className="hidden rounded-xl shadow-xs dark:block" />
             <span className="text-lg tracking-tight">
-              <span className="font-normal">Platy</span><span className="font-bold">bill</span>
+              <span className="font-medium text-slate-800 dark:text-slate-100">Platy</span>
+              <span className="font-bold text-blue-600 dark:text-blue-400">bill</span>
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#dfa90c] ml-0.5 align-baseline" />
             </span>
           </Link>
 

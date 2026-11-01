@@ -13,18 +13,18 @@ export const TILE_STYLES: Record<
   { border: string; header: string; icon: string }
 > = {
   blue: {
-    border: "border-blue-400 dark:border-blue-500",
-    header: "bg-blue-50 dark:bg-blue-900/30",
-    icon: "text-blue-500 dark:text-blue-400",
+    border: "border-blue-500 dark:border-blue-400",
+    header: "bg-blue-50/70 dark:bg-blue-950/40",
+    icon: "text-blue-600 dark:text-blue-400",
   },
   yellow: {
-    border: "border-yellow-400 dark:border-yellow-500",
-    header: "bg-yellow-50 dark:bg-yellow-900/30",
-    icon: "text-yellow-600 dark:text-yellow-400",
+    border: "border-amber-500 dark:border-amber-400",
+    header: "bg-amber-50/70 dark:bg-amber-950/40",
+    icon: "text-amber-600 dark:text-amber-400",
   },
   red: {
-    border: "border-red-400 dark:border-red-500",
-    header: "bg-red-50 dark:bg-red-900/30",
+    border: "border-red-500 dark:border-red-400",
+    header: "bg-red-50/70 dark:bg-red-950/40",
     icon: "text-red-500 dark:text-red-400",
   },
 };
