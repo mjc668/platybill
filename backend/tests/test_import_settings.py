@@ -74,6 +74,15 @@ def test_patch_settings_endpoint(client_db):
         assert body["import_dir"] == "/data/import"
         assert body["import_poll_minutes"] == 5
 
+        r_ap = client.patch(
+            "/import/settings",
+            json={"imap_afterpay_enabled": True},
+            headers=auth(token),
+        )
+        assert r_ap.status_code == 200
+        assert r_ap.json()["imap_afterpay_enabled"] is True
+        assert app_settings.imap_afterpay_enabled(db) is True
+
         r = client.patch(
             "/import/settings", json={"directory": "/etc"}, headers=auth(token)
         )

@@ -26,7 +26,13 @@ from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, Paymen
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
 from app.services import app_settings
-from app.services.bill_extract import ExtractedBill, extract_document, extract_from_text
+from app.services.afterpay_parser import is_afterpay_email, parse_afterpay
+from app.services.bill_extract import (
+    ExtractedBill,
+    extract_bnpl_from_text,
+    extract_document,
+    extract_from_text,
+)
 from app.services.llm import LlmUnavailable
 from app.services.payments import recalculate_instance
 from app.services.recurrence import _due_date_for_period
@@ -106,6 +112,7 @@ def create_draft(
     source_ref: str,
     filename: str | None,
     extracted: ExtractedBill,
+    meta: dict | None = None,
 ) -> ImportDraft | None:
     """Insert a draft unless `source_ref` was already imported (any status)."""
     existing = (
@@ -126,6 +133,7 @@ def create_draft(
         raw_text=extracted.raw_text,
         matched_bill_id=match_bill(db, user_id, extracted),
         status=ImportStatus.pending,
+        meta=meta,
     )
     db.add(draft)
     db.commit()
@@ -260,8 +268,11 @@ def confirm_draft(
     created = False
     if instance is None:
         if bill.frequency == BillFrequency.weekly:
-            raise ValueError("No matching instance for this weekly bill")
-        due_date = draft.due_date or _due_date_for_period(period, bill.due_day)
+            due_date = draft.due_date
+            if due_date is None:
+                raise ValueError("Cannot determine the due date for this weekly bill")
+        else:
+            due_date = draft.due_date or _due_date_for_period(period, bill.due_day)
         if due_date is None:
             raise ValueError("Cannot determine the due date for this period")
         existing = (
@@ -412,6 +423,7 @@ def _message_drafts(
     skipped = 0
     part_index = 0
     text_body: str | None = None
+    html_body: str | None = None
     had_attachment = False
 
     for part in message.walk():
@@ -440,6 +452,46 @@ def _message_drafts(
                 text_body = payload.decode(
                     part.get_content_charset() or "utf-8", "replace"
                 )
+        elif content_type == "text/html" and html_body is None:
+            payload = part.get_payload(decode=True)
+            if isinstance(payload, bytes):
+                html_body = payload.decode(
+                    part.get_content_charset() or "utf-8", "replace"
+                )
+
+    # Afterpay / BNPL extraction when enabled
+    if not had_attachment and app_settings.imap_afterpay_enabled(db):
+        combined_text = (html_body or "") + "\n" + (text_body or "")
+        subject = message.get("Subject", "")
+        if is_afterpay_email(sender, subject, combined_text):
+            bnpl = parse_afterpay(html_body or "", text_body or "")
+            if bnpl is None:
+                llm = app_settings.llm_config(db)
+                if llm is not None:
+                    bnpl = extract_bnpl_from_text(combined_text, config=llm)
+            if bnpl is not None:
+                ref = f"email:{message_id}:afterpay"
+                extracted = ExtractedBill(
+                    provider=f"Afterpay: {bnpl.merchant}",
+                    amount=bnpl.installment_amount,
+                    currency=bnpl.currency,
+                    due_date=bnpl.start_date,
+                    period=bnpl.start_date.strftime("%Y-%m"),
+                    raw_text=html_body or text_body or "",
+                    confidence=1.0,
+                )
+                draft = create_draft(
+                    db,
+                    user_id=user.id,
+                    source=ImportSource.email,
+                    source_ref=ref,
+                    filename=None,
+                    extracted=extracted,
+                    meta=bnpl.to_dict(),
+                )
+                if draft is None:
+                    return [], 1
+                return [draft], 0
 
     # Only fall back to the body when the message carried no document at all;
     # a deduped attachment must not spawn a second draft from the body text.

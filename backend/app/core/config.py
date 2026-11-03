@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     imap_poll_minutes: int = 15
     imap_mark_read: bool = True
     imap_allowed_senders: list[str] = []
+    imap_afterpay_enabled: bool = False
 
     # Password reset
     app_base_url: str = "http://localhost:3010"

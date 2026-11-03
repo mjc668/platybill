@@ -292,13 +292,18 @@ function ImportRow({
   const locale = useLocale();
   const [amount, setAmount] = useState(draft.amount ?? "");
   const [dueDate, setDueDate] = useState(draft.due_date ?? "");
+  const isAfterpay = draft.meta?.type === "afterpay";
+  const afterpayInterval =
+    typeof draft.meta?.interval_count === "number" ? draft.meta.interval_count : 2;
+  const afterpayOccurrences =
+    typeof draft.meta?.max_occurrences === "number" ? draft.meta.max_occurrences : 4;
   const [billId, setBillId] = useState<string>(
     draft.matched_bill_id != null ? String(draft.matched_bill_id) : "",
   );
   const [creating, setCreating] = useState(draft.matched_bill_id === null);
   const [frequency, setFrequency] = useState<
     "monthly" | "weekly" | "annual" | "one_off"
-  >("monthly");
+  >(isAfterpay ? "weekly" : "monthly");
   const [newName, setNewName] = useState(draft.provider ?? draft.filename ?? "");
   const [newCategoryId, setNewCategoryId] = useState<string>(
     defaultCategoryId != null ? String(defaultCategoryId) : "",
@@ -332,6 +337,8 @@ function ImportRow({
           due_month:
             frequency === "annual" || frequency === "one_off" ? dueMonth : null,
           start_date: frequency === "weekly" ? dueDate || null : null,
+          interval_count: isAfterpay ? afterpayInterval : 1,
+          max_occurrences: isAfterpay ? afterpayOccurrences : null,
         });
         targetBillId = created.id;
       } else {
@@ -371,15 +378,28 @@ function ImportRow({
             <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
               {draft.provider ?? draft.filename ?? t("unknownSource")}
             </p>
-            <Badge tone="blue">{t("importBadge")}</Badge>
+            {isAfterpay ? (
+              <Badge tone="amber">{t("afterpayBadge")}</Badge>
+            ) : (
+              <Badge tone="blue">{t("importBadge")}</Badge>
+            )}
             <span className="text-xs text-slate-400 dark:text-slate-500">
               {t(`source.${draft.source}`)}
             </span>
           </div>
-          {draft.period && (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {monthLabel(draft.period, locale)}
+          {isAfterpay ? (
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+              {t("afterpayInstallments", {
+                count: afterpayOccurrences,
+                interval: afterpayInterval === 1 ? t("weekly") : t("fortnightly"),
+              })}
             </p>
+          ) : (
+            draft.period && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {monthLabel(draft.period, locale)}
+              </p>
+            )
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">

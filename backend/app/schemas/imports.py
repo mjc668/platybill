@@ -21,6 +21,7 @@ class ImportDraftOut(BaseModel):
     matched_bill_name: str | None = None
     status: ImportStatus
     error: str | None
+    meta: dict | None = None
     created_at: datetime
     processed_at: datetime | None
 
@@ -65,6 +66,7 @@ class ImportSettingsIn(BaseModel):
     imap_poll_minutes: int | None = Field(None, ge=1, le=1440)
     imap_mark_read: bool | None = None
     imap_allowed_senders: str | None = Field(None, max_length=2000)
+    imap_afterpay_enabled: bool | None = None
 
 
 class ImportStatusOut(BaseModel):
@@ -91,6 +93,7 @@ class ImportStatusOut(BaseModel):
     imap_poll_minutes: int
     imap_mark_read: bool
     imap_password_configured: bool
+    imap_afterpay_enabled: bool = False
     pending_count: int
     last_error: str | None
 

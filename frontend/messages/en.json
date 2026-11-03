@@ -139,6 +139,7 @@
         "imapFolderLabel": "Folder",
         "imapTlsLabel": "Use TLS",
         "imapMarkReadLabel": "Mark scanned mail as read",
+        "imapAfterpayLabel": "Enable Afterpay extraction",
         "imapSendersLabel": "Only accept mail from (comma-separated, blank = anyone)",
         "imapSendersPlaceholder": "bills@utility.com, invoices@…",
         "imapTestButton": "Test inbox",
@@ -320,6 +321,10 @@
         "title": "{count, plural, one {# bill to review} other {# bills to review}}",
         "estimateBadge": "Amount needed",
         "importBadge": "Imported",
+        "afterpayBadge": "Afterpay",
+        "afterpayInstallments": "{count} {interval} payments",
+        "weekly": "weekly",
+        "fortnightly": "fortnightly",
         "source": {
             "upload": "upload",
             "directory": "watched folder",

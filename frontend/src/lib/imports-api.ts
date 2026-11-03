@@ -16,6 +16,7 @@ export interface ImportDraftOut {
   matched_bill_name: string | null;
   status: ImportStatus;
   error: string | null;
+  meta?: Record<string, unknown> | null;
   created_at: string;
   processed_at: string | null;
 }
@@ -54,6 +55,7 @@ export interface ImportStatusOut {
   imap_poll_minutes: number;
   imap_mark_read: boolean;
   imap_password_configured: boolean;
+  imap_afterpay_enabled: boolean;
   pending_count: number;
   last_error: string | null;
 }
@@ -107,6 +109,7 @@ export function updateImportSettings(data: {
   imap_poll_minutes?: number;
   imap_mark_read?: boolean;
   imap_allowed_senders?: string;
+  imap_afterpay_enabled?: boolean;
 }): Promise<ImportStatusOut> {
   return apiFetch<ImportStatusOut>("/import/settings", {
     method: "PATCH",

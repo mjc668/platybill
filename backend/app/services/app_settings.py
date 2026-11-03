@@ -56,6 +56,7 @@ IMAP_TLS_KEY = "imap.tls"
 IMAP_POLL_MINUTES_KEY = "imap.poll_minutes"
 IMAP_MARK_READ_KEY = "imap.mark_read"
 IMAP_ALLOWED_SENDERS_KEY = "imap.allowed_senders"
+IMAP_AFTERPAY_ENABLED_KEY = "imap.afterpay_enabled"
 MIN_POLL_MINUTES = 1
 MAX_POLL_MINUTES = 1440
 
@@ -361,6 +362,10 @@ def imap_allowed_senders(db: Session) -> list[str]:
     if override is not None:
         return [s.strip() for s in override.split(",") if s.strip()]
     return settings.imap_allowed_senders
+
+
+def imap_afterpay_enabled(db: Session) -> bool:
+    return _bool_override(db, IMAP_AFTERPAY_ENABLED_KEY, settings.imap_afterpay_enabled)
 
 
 def imap_configured(db: Session) -> bool:

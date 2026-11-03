@@ -244,6 +244,7 @@ def _status(db: Session, me: User) -> ImportStatusOut:
         imap_poll_minutes=app_settings.imap_poll_minutes(db),
         imap_mark_read=app_settings.imap_mark_read(db),
         imap_password_configured=bool(app_settings.imap_password(db)),
+        imap_afterpay_enabled=app_settings.imap_afterpay_enabled(db),
         pending_count=pending_count,
         last_error=last_failed.error if last_failed else None,
     )
@@ -360,6 +361,12 @@ def update_import_settings(
     if body.imap_allowed_senders is not None:
         app_settings.set_value(
             db, app_settings.IMAP_ALLOWED_SENDERS_KEY, body.imap_allowed_senders
+        )
+    if body.imap_afterpay_enabled is not None:
+        app_settings.set_value(
+            db,
+            app_settings.IMAP_AFTERPAY_ENABLED_KEY,
+            "1" if body.imap_afterpay_enabled else "0",
         )
     return _status(db, me)
 

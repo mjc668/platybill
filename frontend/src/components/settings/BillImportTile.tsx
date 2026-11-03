@@ -84,6 +84,7 @@ export function BillImportTile({
   const [imapTls, setImapTls] = useState(true);
   const [imapPollMinutes, setImapPollMinutes] = useState("15");
   const [imapMarkRead, setImapMarkRead] = useState(true);
+  const [imapAfterpay, setImapAfterpay] = useState(false);
   const [imapSenders, setImapSenders] = useState("");
   const [folders, setFolders] = useState<string[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(false);
@@ -107,6 +108,7 @@ export function BillImportTile({
         setImapTls(data.imap_tls);
         setImapPollMinutes(String(data.imap_poll_minutes));
         setImapMarkRead(data.imap_mark_read);
+        setImapAfterpay(data.imap_afterpay_enabled ?? false);
         setLoading(false);
       })
       .catch(() => {
@@ -144,6 +146,7 @@ export function BillImportTile({
       imapTls !== status.imap_tls ||
       imapMinutesValue !== status.imap_poll_minutes ||
       imapMarkRead !== status.imap_mark_read ||
+      imapAfterpay !== (status.imap_afterpay_enabled ?? false) ||
       imapUser.trim() !== "" ||
       imapPassword !== "" ||
       imapSenders.trim() !== "");
@@ -172,6 +175,7 @@ export function BillImportTile({
         imap_tls: imapTls,
         imap_poll_minutes: imapMinutesValid ? imapMinutesValue : undefined,
         imap_mark_read: imapMarkRead,
+        imap_afterpay_enabled: imapAfterpay,
         ...(imapSenders.trim() !== "" ? { imap_allowed_senders: imapSenders.trim() } : {}),
       });
       setStatus(updated);
@@ -190,6 +194,7 @@ export function BillImportTile({
       setImapTls(updated.imap_tls);
       setImapPollMinutes(String(updated.imap_poll_minutes));
       setImapMarkRead(updated.imap_mark_read);
+      setImapAfterpay(updated.imap_afterpay_enabled ?? false);
       setImapPassword("");
       setImapSenders("");
     } catch (err) {
@@ -657,6 +662,15 @@ export function BillImportTile({
                   className="h-4 w-4 rounded accent-blue-700"
                 />
                 {ti("imapMarkReadLabel")}
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-600 dark:text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={imapAfterpay}
+                  onChange={(e) => setImapAfterpay(e.target.checked)}
+                  className="h-4 w-4 rounded accent-blue-700"
+                />
+                {ti("imapAfterpayLabel")}
               </label>
             </div>
             <div className="flex flex-col gap-1">

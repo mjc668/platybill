@@ -24,6 +24,7 @@ from app.services.llm import (
     generate_json,
     generate_text,
 )
+from app.services.afterpay_parser import ExtractedBnpl, InstallmentDetail
 
 logger = logging.getLogger(__name__)
 
@@ -298,3 +299,98 @@ def extract_document(
     except LlmError as exc:
         logger.info("Primary vision parse failed (%s); trying two-phase", exc)
         return _extract_image_two_phase(image, config=config)
+
+
+BNPL_EXTRACTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "merchant": {
+            "type": ["string", "null"],
+            "description": "Store or merchant name where the order was placed",
+        },
+        "order_id": {
+            "type": ["string", "null"],
+            "description": "Order or confirmation number",
+        },
+        "total_amount": {
+            "type": ["number", "null"],
+            "description": "Total order amount, digits only",
+        },
+        "installment_amount": {
+            "type": ["number", "null"],
+            "description": "Amount per recurring installment, digits only",
+        },
+        "currency": {
+            "type": ["string", "null"],
+            "description": "ISO 4217 code such as AUD, USD, GBP",
+        },
+        "start_date": {
+            "type": ["string", "null"],
+            "description": "Due date of first installment in YYYY-MM-DD form",
+        },
+        "interval_count": {
+            "type": ["integer", "null"],
+            "description": "1 for weekly, 2 for fortnightly (every 2 weeks)",
+        },
+        "max_occurrences": {
+            "type": ["integer", "null"],
+            "description": "Total number of installments (e.g. 4)",
+        },
+    },
+    "required": ["merchant", "installment_amount", "start_date"],
+}
+
+
+def extract_bnpl_from_text(text: str, *, config: LlmConfig) -> ExtractedBnpl | None:
+    """Tier 2 fallback: Extract BNPL order fields using the configured LLM."""
+    prompt = (
+        "Extract the Buy Now Pay Later / Afterpay order details from the email text into JSON:\n\n"
+        + text[:4000]
+    )
+    try:
+        payload = generate_json(
+            config=config,
+            prompt=prompt,
+            schema=BNPL_EXTRACTION_SCHEMA,
+        )
+    except Exception as exc:
+        logger.warning("LLM BNPL extraction failed: %s", exc)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    merchant = payload.get("merchant")
+    inst_amt = payload.get("installment_amount")
+    start_date_str = payload.get("start_date")
+    if not merchant or inst_amt is None or not start_date_str:
+        return None
+
+    try:
+        installment_amount = Decimal(str(inst_amt))
+        total_amount = (
+            Decimal(str(payload.get("total_amount")))
+            if payload.get("total_amount") is not None
+            else installment_amount * 4
+        )
+        parsed_start = date.fromisoformat(start_date_str[:10])
+    except (ValueError, InvalidOperation):
+        return None
+
+    interval_count = payload.get("interval_count") or 2
+    max_occurrences = payload.get("max_occurrences") or 4
+    order_id = str(payload.get("order_id") or "UNKNOWN")
+    currency = str(payload.get("currency") or "AUD")
+
+    return ExtractedBnpl(
+        merchant=merchant,
+        order_id=order_id,
+        total_amount=total_amount,
+        installment_amount=installment_amount,
+        currency=currency,
+        start_date=parsed_start,
+        interval_count=interval_count,
+        max_occurrences=max_occurrences,
+        installments=[],
+        type="afterpay",
+    )

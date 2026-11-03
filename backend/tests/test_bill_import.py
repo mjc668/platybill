@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
+from app.services import app_settings
 from app.services.bill_import import _message_drafts, poll_directory, poll_email
 from tests.conftest import auth, register_and_login, sync_payments
 
@@ -331,6 +332,89 @@ def test_message_drafts_allowed_senders(client_db):
         drafts, skipped = _message_drafts(db, user, raw)
     assert drafts == []
     assert skipped == 0
+
+
+def test_message_drafts_afterpay_email(client_db):
+    client, db = client_db
+    register_and_login(client, "imp_afterpay@test.com")
+    user = db.query(User).filter(User.email == "imp_afterpay@test.com").one()
+
+    from tests.test_afterpay_parser import SAMPLE_HTML
+
+    message = EmailMessage()
+    message["From"] = "orders@afterpay.com"
+    message["Message-ID"] = "<afterpay-123@example>"
+    message["Subject"] = "Your order with Bing Lee Electrics Pty Limited is confirmed"
+    message.set_content("Plain text fallback")
+    message.add_alternative(SAMPLE_HTML, subtype="html")
+    raw = message.as_bytes()
+
+    app_settings.set_value(db, app_settings.IMAP_AFTERPAY_ENABLED_KEY, "1")
+
+    drafts, skipped = _message_drafts(db, user, raw)
+    assert len(drafts) == 1
+    assert skipped == 0
+    draft = drafts[0]
+    assert draft.provider == "Afterpay: Bing Lee Electrics Pty Limited"
+    assert draft.amount == Decimal("71.50")
+    assert draft.due_date == date(2026, 11, 1)
+    assert draft.meta is not None
+    assert draft.meta["order_id"] == "1016080531"
+    assert draft.meta["interval_count"] == 2
+    assert draft.meta["max_occurrences"] == 4
+
+    # Second poll dedupes
+    again, skipped_again = _message_drafts(db, user, raw)
+    assert again == []
+    assert skipped_again == 1
+
+
+def test_confirm_afterpay_draft(client_db):
+    client, db = client_db
+    token = register_and_login(client, "imp_confirm_ap@test.com")
+    user = db.query(User).filter(User.email == "imp_confirm_ap@test.com").one()
+
+    from tests.test_afterpay_parser import SAMPLE_HTML
+
+    message = EmailMessage()
+    message["From"] = "orders@afterpay.com"
+    message["Message-ID"] = "<afterpay-456@example>"
+    message["Subject"] = "Your order with Bing Lee Electrics Pty Limited is confirmed"
+    message.add_alternative(SAMPLE_HTML, subtype="html")
+    raw = message.as_bytes()
+
+    app_settings.set_value(db, app_settings.IMAP_AFTERPAY_ENABLED_KEY, "1")
+    drafts, _ = _message_drafts(db, user, raw)
+    assert len(drafts) == 1
+    draft = drafts[0]
+
+    # Create bill
+    r = client.post(
+        "/bills",
+        json={
+            "name": "Afterpay: Bing Lee",
+            "frequency": "weekly",
+            "interval_count": 2,
+            "max_occurrences": 4,
+            "start_date": "2026-11-01",
+            "amount": 71.50,
+            "category": "other",
+        },
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    bill_id = r.json()["id"]
+
+    # Confirm the draft for this bill
+    r_conf = client.post(
+        f"/import/drafts/{draft.id}/confirm",
+        json={"bill_id": bill_id},
+        headers=auth(token),
+    )
+    assert r_conf.status_code == 200
+    db.refresh(draft)
+    assert draft.status == ImportStatus.confirmed
+    assert draft.matched_bill_id == bill_id
 
 
 # ---------------------------------------------------------------------------
