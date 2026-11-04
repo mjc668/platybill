@@ -48,6 +48,19 @@ function StatusRow({
   );
 }
 
+function formatMinutesHelper(mins: number): string | null {
+  if (!Number.isFinite(mins) || mins <= 0) return null;
+  if (mins < 60) return `${mins}m`;
+  const days = Math.floor(mins / 1440);
+  const remainingHours = Math.floor((mins % 1440) / 60);
+  const remainingMins = mins % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (remainingHours > 0) parts.push(`${remainingHours}h`);
+  if (remainingMins > 0) parts.push(`${remainingMins}m`);
+  return parts.join(" ") || `${mins}m`;
+}
+
 export function BillImportTile({
   t,
   isCollapsed,
@@ -120,7 +133,7 @@ export function BillImportTile({
   }, [refreshToken]);
 
   const minutesValue = parseInt(minutes, 10);
-  const minutesValid = Number.isFinite(minutesValue) && minutesValue >= 1 && minutesValue <= 1440;
+  const minutesValid = Number.isFinite(minutesValue) && minutesValue >= 1 && minutesValue <= 10080;
   const directoryValid = directory.startsWith("/");
   const urlValid = ollamaUrl === "" || /^https?:\/\//.test(ollamaUrl);
   const llmUrlValid = llmBaseUrl === "" || /^https?:\/\//.test(llmBaseUrl);
@@ -129,7 +142,8 @@ export function BillImportTile({
     Number.isFinite(imapPortValue) && imapPortValue >= 1 && imapPortValue <= 65535;
   const imapMinutesValue = parseInt(imapPollMinutes, 10);
   const imapMinutesValid =
-    Number.isFinite(imapMinutesValue) && imapMinutesValue >= 1 && imapMinutesValue <= 1440;
+    Number.isFinite(imapMinutesValue) && imapMinutesValue >= 1 && imapMinutesValue <= 10080;
+  const llmModelValid = llmProvider === "ollama" || llmModel.trim() !== "";
   const dirty =
     status !== null &&
     (enabled !== status.import_enabled ||
@@ -151,10 +165,19 @@ export function BillImportTile({
       imapPassword !== "" ||
       imapSenders.trim() !== "");
 
+  const canSave =
+    busy === null &&
+    dirty &&
+    minutesValid &&
+    directoryValid &&
+    urlValid &&
+    llmUrlValid &&
+    imapPortValid &&
+    imapMinutesValid &&
+    llmModelValid;
+
   async function handleSave() {
-    if (!minutesValid || !directoryValid || !urlValid || !llmUrlValid) return;
-    if (!imapPortValid || !imapMinutesValid) return;
-    if (llmProvider !== "ollama" && llmModel.trim() === "") return;
+    if (!canSave) return;
     setBusy("save");
     setMessage(null);
     try {
@@ -453,30 +476,27 @@ export function BillImportTile({
                 >
                   {ti("pollMinutesLabel")}
                 </label>
-                <input
-                  id="import-minutes"
-                  type="number"
-                  min="1"
-                  max="1440"
-                  value={minutes}
-                  onChange={(e) => setMinutes(e.target.value)}
-                  className={`${inputClass} w-24`}
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    id="import-minutes"
+                    type="number"
+                    min="1"
+                    max="10080"
+                    value={minutes}
+                    onChange={(e) => setMinutes(e.target.value)}
+                    className={`${inputClass} w-24`}
+                  />
+                  {formatMinutesHelper(minutesValue) && (
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                      ({formatMinutesHelper(minutesValue)})
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={
-                  busy !== null ||
-                  !dirty ||
-                  !minutesValid ||
-                  !directoryValid ||
-                  !urlValid ||
-                  !llmUrlValid ||
-                  !imapPortValid ||
-                  !imapMinutesValid ||
-                  llmModel.trim() === ""
-                }
+                disabled={!canSave}
                 className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy === "save" ? (
@@ -635,15 +655,22 @@ export function BillImportTile({
                 >
                   {ti("pollMinutesLabel")}
                 </label>
-                <input
-                  id="imap-minutes"
-                  type="number"
-                  min="1"
-                  max="1440"
-                  value={imapPollMinutes}
-                  onChange={(e) => setImapPollMinutes(e.target.value)}
-                  className={`${inputClass} w-24`}
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    id="imap-minutes"
+                    type="number"
+                    min="1"
+                    max="10080"
+                    value={imapPollMinutes}
+                    onChange={(e) => setImapPollMinutes(e.target.value)}
+                    className={`${inputClass} w-24`}
+                  />
+                  {formatMinutesHelper(imapMinutesValue) && (
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                      ({formatMinutesHelper(imapMinutesValue)})
+                    </span>
+                  )}
+                </div>
               </div>
               <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-600 dark:text-slate-400">
                 <input
@@ -688,6 +715,21 @@ export function BillImportTile({
                 className={`${inputClass} w-full`}
               />
             </div>
+            <div className="flex items-center justify-end pt-1">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!canSave}
+                className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "save" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Save size={13} />
+                )}
+                {ti("save")}
+              </button>
+            </div>
           </div>
 
           {status.last_error && (
@@ -710,7 +752,20 @@ export function BillImportTile({
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!canSave}
+              className="flex items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === "save" ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Save size={13} />
+              )}
+              {ti("save")}
+            </button>
             <button
               type="button"
               onClick={handleTest}

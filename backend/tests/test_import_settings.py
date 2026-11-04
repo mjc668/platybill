@@ -93,6 +93,20 @@ def test_patch_settings_endpoint(client_db):
         )
         assert r.status_code == 422
 
+        r_high = client.patch(
+            "/import/settings",
+            json={"poll_minutes": 360, "imap_poll_minutes": 3600},
+            headers=auth(token),
+        )
+        assert r_high.status_code == 200
+        assert r_high.json()["import_poll_minutes"] == 360
+        assert r_high.json()["imap_poll_minutes"] == 3600
+
+        r_toolarge = client.patch(
+            "/import/settings", json={"poll_minutes": 10081}, headers=auth(token)
+        )
+        assert r_toolarge.status_code == 422
+
     status = client.get("/import/status", headers=auth(token)).json()
     assert status["import_dir"] == "/data/import"
 

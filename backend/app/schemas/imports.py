@@ -49,7 +49,7 @@ class ImportConfirmOut(BaseModel):
 class ImportSettingsIn(BaseModel):
     enabled: bool | None = None
     directory: str | None = Field(None, max_length=255)
-    poll_minutes: int | None = Field(None, ge=1, le=1440)
+    poll_minutes: int | None = Field(None, ge=1, le=10080)
     ollama_base_url: str | None = Field(None, max_length=255)
     ollama_model: str | None = Field(None, max_length=255)
     llm_provider: str | None = Field(None, max_length=20)
@@ -63,7 +63,7 @@ class ImportSettingsIn(BaseModel):
     imap_password: str | None = Field(None, max_length=500)
     imap_folder: str | None = Field(None, max_length=255)
     imap_tls: bool | None = None
-    imap_poll_minutes: int | None = Field(None, ge=1, le=1440)
+    imap_poll_minutes: int | None = Field(None, ge=1, le=10080)
     imap_mark_read: bool | None = None
     imap_allowed_senders: str | None = Field(None, max_length=2000)
     imap_afterpay_enabled: bool | None = None

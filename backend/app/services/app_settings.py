@@ -58,7 +58,7 @@ IMAP_MARK_READ_KEY = "imap.mark_read"
 IMAP_ALLOWED_SENDERS_KEY = "imap.allowed_senders"
 IMAP_AFTERPAY_ENABLED_KEY = "imap.afterpay_enabled"
 MIN_POLL_MINUTES = 1
-MAX_POLL_MINUTES = 1440
+MAX_POLL_MINUTES = 10080
 
 
 def get_value(db: Session, key: str) -> str | None:

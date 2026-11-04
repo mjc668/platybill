@@ -95,8 +95,8 @@ class Settings(BaseSettings):
     import_poll_minutes: int = 15
     import_max_file_mb: int = 15
     import_keep_files: bool = False
-    import_rate_limit: int = 10
-    import_rate_window_seconds: int = 3600
+    import_rate_limit: int = 60
+    import_rate_window_seconds: int = 60
 
     # IMAP mailbox (optional; part of bill import)
     imap_host: str | None = None
