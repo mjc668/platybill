@@ -14,7 +14,7 @@
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
     "lucide-react": "^1.17.0",
-    "next": "16.4.3",
+    "next": "^16.4.6",
     "next-intl": "^4.13.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
