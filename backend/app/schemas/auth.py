@@ -160,6 +160,10 @@ class SmtpStatusResponse(BaseModel):
     configured: bool
 
 
+class RegistrationStatusResponse(BaseModel):
+    enabled: bool
+
+
 class NotificationStatusResponse(BaseModel):
     smtp_configured: bool
     apprise_configured: bool

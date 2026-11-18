@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -16,6 +16,13 @@ export default function RegisterPage() {
   const t = useTranslations("Auth");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ enabled: boolean }>("/auth/registration-status")
+      .then((data) => setRegistrationEnabled(data?.enabled ?? false))
+      .catch(() => setRegistrationEnabled(true));
+  }, []);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -64,52 +71,69 @@ export default function RegisterPage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:bg-slate-800 dark:border-slate-700">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="email"
-                className="text-sm font-medium text-slate-700 dark:text-slate-300"
-              >
-                {t("emailLabel")}
-              </label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                required
-                autoComplete="email"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="password"
-                className="text-sm font-medium text-slate-700 dark:text-slate-300"
-              >
-                {t("passwordLabel")}
-              </label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                required
-                autoComplete="new-password"
-              />
-              <p className="text-xs text-slate-400 dark:text-slate-500">
-                {t("passwordHint")}
+          {registrationEnabled === false ? (
+            <div className="space-y-4 text-center">
+              <p className="text-base font-medium text-slate-800 dark:text-slate-100">
+                {t("registrationClosed")}
               </p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {t("registrationClosedDetail")}
+              </p>
+              <Link
+                href="/login"
+                className="inline-block rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-800"
+              >
+                {t("signIn")}
+              </Link>
             </div>
-
-            {error && (
-              <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
-                {error}
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="email"
+                  className="text-sm font-medium text-slate-700 dark:text-slate-300"
+                >
+                  {t("emailLabel")}
+                </label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                />
               </div>
-            )}
 
-            <Button type="submit" loading={loading} className="mt-1 w-full py-2.5">
-              {loading ? t("creatingAccount") : t("createAccount")}
-            </Button>
-          </form>
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="password"
+                  className="text-sm font-medium text-slate-700 dark:text-slate-300"
+                >
+                  {t("passwordLabel")}
+                </label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  {t("passwordHint")}
+                </p>
+              </div>
+
+              {error && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
+                  {error}
+                </div>
+              )}
+
+              <Button type="submit" loading={loading} className="mt-1 w-full py-2.5">
+                {loading ? t("creatingAccount") : t("createAccount")}
+              </Button>
+            </form>
+          )}
         </div>
 
         <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">

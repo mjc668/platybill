@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import current_user
+from app.core.deps import current_user, require_install_owner
 from app.core.ratelimit import rate_limited_by_user
 from app.models.user import User
 from app.schemas.notifications import (
@@ -17,7 +17,6 @@ from app.schemas.notifications import (
     NotificationSettingsOut,
 )
 from app.services import app_settings
-from app.services.bill_import import resolve_import_user
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -39,23 +38,12 @@ def _status(db: Session) -> NotificationSettingsOut:
     )
 
 
-def _guard(db: Session, me: User) -> None:
-    """Same install-global rule as import settings: the import target account
-    (or the sole account) owns process-wide settings."""
-    target = resolve_import_user(db)
-    if target is not None and target.id != me.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the import target account can change notification settings",
-        )
-
-
 @router.get("/settings", response_model=NotificationSettingsOut)
 def get_notification_settings(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
-    _guard(db, me)
+    require_install_owner(db, me)
     return _status(db)
 
 
@@ -66,13 +54,14 @@ def update_notification_settings(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    _guard(db, me)
+    require_install_owner(db, me)
     if body.smtp is not None:
         smtp = body.smtp
         if smtp.host is not None:
-            app_settings.set_value(
-                db, app_settings.SMTP_HOST_KEY, smtp.host.strip() or None
-            )
+            new_host = smtp.host.strip() or None
+            if new_host != app_settings.smtp_host(db) and smtp.password is None:
+                app_settings.set_value(db, app_settings.SMTP_PASSWORD_KEY, None)
+            app_settings.set_value(db, app_settings.SMTP_HOST_KEY, new_host)
         if smtp.port is not None:
             app_settings.set_value(db, app_settings.SMTP_PORT_KEY, str(smtp.port))
         if smtp.user is not None:

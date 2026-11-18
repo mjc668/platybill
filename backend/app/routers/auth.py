@@ -31,6 +31,7 @@ from app.schemas.auth import (
     MessageResponse,
     NotificationStatusResponse,
     RegisterRequest,
+    RegistrationStatusResponse,
     ResetPasswordRequest,
     SendMonthlySummaryNowOut,
     SendNotificationNowOut,
@@ -98,6 +99,11 @@ def register(
     _rl: None = Depends(rate_limited("register")),
     db: Session = Depends(get_db),
 ):
+    if not settings.registration_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is disabled",
+        )
     email = body.email.lower()
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -283,6 +289,11 @@ def change_email(
 @router.get("/smtp-status", response_model=SmtpStatusResponse)
 def smtp_status(db: Session = Depends(get_db)):
     return SmtpStatusResponse(configured=app_settings.smtp_configured(db))
+
+
+@router.get("/registration-status", response_model=RegistrationStatusResponse)
+def registration_status():
+    return RegistrationStatusResponse(enabled=settings.registration_enabled)
 
 
 @router.get("/notification-status", response_model=NotificationStatusResponse)

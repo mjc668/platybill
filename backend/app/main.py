@@ -24,7 +24,7 @@ from app.routers import (
     passkeys,
     stats,
 )
-from app.services.bill_import import poll_directory_tick, poll_email_tick
+from app.services.bill_import import poll_directory_job, poll_email_job
 from app.services.reminder_job import send_catchup_reminders, send_daily_reminders
 from app.services.snapshot_cleanup import cleanup_old_snapshots
 
@@ -47,13 +47,13 @@ async def lifespan(app: FastAPI):
     # Pollers tick every minute and decide internally whether their configured
     # interval has elapsed, so Settings changes apply without a restart.
     scheduler.add_job(
-        poll_directory_tick,
+        poll_directory_job,
         "interval",
         minutes=1,
         args=[SessionLocal],
     )
     scheduler.add_job(
-        poll_email_tick,
+        poll_email_job,
         "interval",
         minutes=1,
         args=[SessionLocal],

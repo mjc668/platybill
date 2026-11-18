@@ -18,7 +18,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.core.timezones import user_today
@@ -634,6 +634,24 @@ def poll_email_tick(db: Session, *, now: float | None = None) -> None:
     if not _due("email", app_settings.imap_poll_minutes(db), moment):
         return
     poll_email(db)
+
+
+def poll_directory_job(session_factory: sessionmaker) -> None:
+    """APScheduler entrypoint: open a fresh Session for the directory poll tick."""
+    db: Session = session_factory()
+    try:
+        poll_directory_tick(db)
+    finally:
+        db.close()
+
+
+def poll_email_job(session_factory: sessionmaker) -> None:
+    """APScheduler entrypoint: open a fresh Session for the email poll tick."""
+    db: Session = session_factory()
+    try:
+        poll_email_tick(db)
+    finally:
+        db.close()
 
 
 def reset_poll_timers() -> None:

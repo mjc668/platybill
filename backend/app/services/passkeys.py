@@ -77,47 +77,49 @@ def resolve_rp_id(request: Request) -> str:
     if settings.webauthn_rp_id:
         return settings.webauthn_rp_id
 
-    # If origin header is present, use its hostname
-    origin = request.headers.get("origin")
-    if origin:
-        parsed = urlparse(origin)
-        if parsed.hostname:
-            return parsed.hostname
+    app_host = urlparse(settings.app_base_url).hostname
+    if settings.is_production and app_host:
+        return app_host
 
-    # Otherwise fall back to host header
     host = request.headers.get("host", "").split(":")[0]
     if host:
         return host
-    return request.url.hostname or "localhost"
+    return app_host or request.url.hostname or "localhost"
 
 
 def resolve_expected_origins(request: Request) -> list[str]:
-    """Compile accepted origins for WebAuthn response verification."""
+    """Compile accepted origins for WebAuthn response verification.
+
+    Never trust client-supplied Origin headers directly: derive origins from
+    configured server settings (APP_BASE_URL and ALLOWED_ORIGINS), falling back
+    to request.base_url / Host only outside production.
+    """
     origins: list[str] = []
 
-    # Client-sent Origin header is the most specific
-    client_origin = request.headers.get("origin")
-    if client_origin:
-        origins.append(client_origin.rstrip("/"))
-
-    scheme = request.url.scheme
-    if settings.cookie_secure:
-        scheme = "https"
-    if settings.trust_proxy and request.headers.get("x-forwarded-proto"):
-        scheme = request.headers.get("x-forwarded-proto", scheme)
-
-    host = request.headers.get("host")
-    if host:
-        origins.append(f"{scheme}://{host}".rstrip("/"))
-
-    base = str(request.base_url).rstrip("/")
-    if base and base not in origins:
-        origins.append(base)
+    parsed_app = urlparse(settings.app_base_url)
+    if parsed_app.scheme and parsed_app.netloc:
+        app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}".rstrip("/")
+        origins.append(app_origin)
 
     for o in settings.allowed_origins:
         cleaned = o.rstrip("/")
-        if cleaned not in origins:
+        if cleaned and cleaned not in origins:
             origins.append(cleaned)
+
+    if not settings.is_production:
+        scheme = "https" if settings.cookie_secure else request.url.scheme
+        if settings.trust_proxy and request.headers.get("x-forwarded-proto"):
+            scheme = request.headers.get("x-forwarded-proto", scheme)
+
+        host = request.headers.get("host")
+        if host:
+            host_origin = f"{scheme}://{host}".rstrip("/")
+            if host_origin not in origins:
+                origins.append(host_origin)
+
+        base = str(request.base_url).rstrip("/")
+        if base and base not in origins:
+            origins.append(base)
 
     return origins
 

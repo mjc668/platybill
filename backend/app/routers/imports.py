@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import current_user
+from app.core.deps import current_user, require_install_owner
 from app.core.ratelimit import rate_limited_by_user
 from app.models.bill import BillTemplate
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
@@ -29,7 +29,6 @@ from app.services.bill_import import (
     import_document,
     poll_directory,
     poll_email,
-    resolve_import_user,
 )
 from app.services.llm import LlmError, LlmUnavailable
 
@@ -255,6 +254,7 @@ def import_status(
     db: Session = Depends(get_db),
     me: User = Depends(current_user),
 ):
+    require_install_owner(db, me)
     return _status(db, me)
 
 
@@ -265,14 +265,7 @@ def update_import_settings(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
-    # Import settings are process-wide: only the account that polled imports
-    # target (or the sole account) may change them.
-    target = resolve_import_user(db)
-    if target is not None and target.id != me.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the import target account can change import settings",
-        )
+    require_install_owner(db, me)
     if body.directory is not None:
         error = app_settings.validate_import_dir(body.directory)
         if error:
@@ -318,7 +311,10 @@ def update_import_settings(
             error = app_settings.validate_server_url(url)
             if error:
                 raise HTTPException(status_code=422, detail=error)
-        app_settings.set_value(db, app_settings.LLM_BASE_URL_KEY, url or None)
+        new_base_url = url or None
+        if new_base_url != app_settings.llm_base_url(db) and body.llm_api_key is None:
+            app_settings.set_value(db, app_settings.LLM_API_KEY_KEY, None)
+        app_settings.set_value(db, app_settings.LLM_BASE_URL_KEY, new_base_url)
     if body.llm_api_key is not None:
         app_settings.set_value(
             db, app_settings.LLM_API_KEY_KEY, body.llm_api_key or None
@@ -328,9 +324,10 @@ def update_import_settings(
             db, app_settings.LLM_TIMEOUT_KEY, str(body.llm_timeout_seconds)
         )
     if body.imap_host is not None:
-        app_settings.set_value(
-            db, app_settings.IMAP_HOST_KEY, body.imap_host.strip() or None
-        )
+        new_imap_host = body.imap_host.strip() or None
+        if new_imap_host != app_settings.imap_host(db) and body.imap_password is None:
+            app_settings.set_value(db, app_settings.IMAP_PASSWORD_KEY, None)
+        app_settings.set_value(db, app_settings.IMAP_HOST_KEY, new_imap_host)
     if body.imap_port is not None:
         app_settings.set_value(db, app_settings.IMAP_PORT_KEY, str(body.imap_port))
     if body.imap_user is not None:
@@ -374,8 +371,10 @@ def update_import_settings(
 @router.post("/test-ollama", response_model=TestOllamaOut)
 def test_ollama(
     db: Session = Depends(get_db),
+    me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
+    require_install_owner(db, me)
     from app.services import llm as llm_client
 
     config = app_settings.llm_config(db)
@@ -411,12 +410,7 @@ def list_imap_folders(
     """List mailbox folders via IMAP LIST (names only, no secrets echoed)."""
     import imaplib
 
-    target = resolve_import_user(db)
-    if target is not None and target.id != me.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the import target account can change import settings",
-        )
+    require_install_owner(db, me)
     if not app_settings.imap_configured(db):
         raise HTTPException(status_code=400, detail="IMAP is not configured")
     host = app_settings.imap_host(db) or ""
@@ -462,12 +456,7 @@ def test_imap(
     """Verify IMAP login + folder selection; returns folder + unseen count."""
     import imaplib
 
-    target = resolve_import_user(db)
-    if target is not None and target.id != me.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the import target account can change import settings",
-        )
+    require_install_owner(db, me)
     if not app_settings.imap_configured(db):
         return {"ok": False, "error": "IMAP is not configured"}
     host = app_settings.imap_host(db) or ""
@@ -511,6 +500,7 @@ def scan_now(
     me: User = Depends(current_user),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
+    require_install_owner(db, me)
     return ScanNowOut(
         directory=poll_directory(db),
         email=poll_email(db),

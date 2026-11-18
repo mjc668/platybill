@@ -7,7 +7,9 @@ from app.models.import_draft import ImportDraft
 from app.services import app_settings
 from app.services.bill_import import (
     poll_directory,
+    poll_directory_job,
     poll_directory_tick,
+    poll_email_job,
     reset_poll_timers,
 )
 from tests.conftest import auth, register_and_login
@@ -249,3 +251,24 @@ def test_upload_blocked_without_ollama_config(client_db):
         r = _upload(client, token)
     assert r.status_code == 503
     assert "Settings" in r.json()["detail"]
+
+
+def test_poll_jobs_open_session_from_factory(client_db):
+    from sqlalchemy.orm import Session, sessionmaker
+
+    _, db = client_db
+    factory = sessionmaker(bind=db.get_bind())
+
+    seen: list[bool] = []
+
+    def _check_tick(session):
+        seen.append(isinstance(session, Session))
+
+    with (
+        patch("app.services.bill_import.poll_directory_tick", side_effect=_check_tick),
+        patch("app.services.bill_import.poll_email_tick", side_effect=_check_tick),
+    ):
+        poll_directory_job(factory)
+        poll_email_job(factory)
+
+    assert seen == [True, True]

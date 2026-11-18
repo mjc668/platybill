@@ -265,6 +265,42 @@ def test_reset_password_revokes_old_token(client_db):
     )
     assert r.status_code == 200
 
+
+def test_rate_limit_ignores_x_real_ip_when_trust_proxy_false(client):
+    from types import SimpleNamespace
+    from app.core.ratelimit import client_ip
+
+    original_proxy = settings.trust_proxy
+    try:
+        settings.trust_proxy = False
+        req = SimpleNamespace(
+            headers={"x-real-ip": "9.9.9.9", "x-forwarded-for": "8.8.8.8"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        assert client_ip(req) == "127.0.0.1"  # type: ignore[arg-type]
+    finally:
+        settings.trust_proxy = original_proxy
+
+
+def test_registration_disabled_blocks_register_and_reports_status(client):
+    original = settings.registration_enabled
+    try:
+        settings.registration_enabled = False
+        status_r = client.get("/auth/registration-status")
+        assert status_r.status_code == 200
+        assert status_r.json() == {"enabled": False}
+
+        reg_r = client.post(
+            "/auth/register",
+            json={"email": "blocked@test.com", "password": "pw123456"},
+        )
+        assert reg_r.status_code == 403
+    finally:
+        settings.registration_enabled = original
+        r_enabled = client.get("/auth/registration-status")
+        assert r_enabled.status_code == 200
+        assert r_enabled.json() == {"enabled": True}
+
     r = client.get("/auth/me", headers=auth(token))
     assert r.status_code == 401
 
@@ -437,3 +473,39 @@ def test_reset_token_stolen_and_still_usable_after_failed_change(client_db):
         json={"token": known_raw, "new_password": "newpassword1"},
     )
     assert r.status_code == 200
+
+
+def test_rate_limit_ignores_x_real_ip_when_trust_proxy_false(client):
+    from types import SimpleNamespace
+    from app.core.ratelimit import client_ip
+
+    original_proxy = settings.trust_proxy
+    try:
+        settings.trust_proxy = False
+        req = SimpleNamespace(
+            headers={"x-real-ip": "9.9.9.9", "x-forwarded-for": "8.8.8.8"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        assert client_ip(req) == "127.0.0.1"  # type: ignore[arg-type]
+    finally:
+        settings.trust_proxy = original_proxy
+
+
+def test_registration_disabled_blocks_register_and_reports_status(client):
+    original = settings.registration_enabled
+    try:
+        settings.registration_enabled = False
+        status_r = client.get("/auth/registration-status")
+        assert status_r.status_code == 200
+        assert status_r.json() == {"enabled": False}
+
+        reg_r = client.post(
+            "/auth/register",
+            json={"email": "blocked@test.com", "password": "pw123456"},
+        )
+        assert reg_r.status_code == 403
+    finally:
+        settings.registration_enabled = original
+        r_enabled = client.get("/auth/registration-status")
+        assert r_enabled.status_code == 200
+        assert r_enabled.json() == {"enabled": True}

@@ -31,7 +31,7 @@ import { categoryColor, categoryValue, sortCategories } from "@/lib/categories";
 import { fetchMe, type UserProfile } from "@/lib/user-api";
 import { SessionExpiredError } from "@/lib/api";
 import BillTemplateForm from "@/components/bills/BillTemplateForm";
-import ReviewInbox from "@/components/payments/ReviewInbox";
+import ReviewInbox from "@/components/bills/ReviewInbox";
 import { uploadBill } from "@/lib/imports-api";
 import BillTemplateRow from "@/components/bills/BillTemplateRow";
 import ArchiveConfirmDialog from "@/components/bills/ArchiveConfirmDialog";

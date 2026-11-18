@@ -33,10 +33,12 @@ def test_challenge_cache_ttl_and_expiry():
 
 
 def test_resolve_rp_id_and_origins():
+    from app.core.config import settings
+
     req = SimpleNamespace(
         headers={
             "host": "my-platybill.domain.local:3010",
-            "origin": "https://my-platybill.domain.local:3010",
+            "origin": "https://evil.example.com",
         },
         base_url="http://my-platybill.domain.local:3010/",
         url=SimpleNamespace(
@@ -47,8 +49,19 @@ def test_resolve_rp_id_and_origins():
     assert rp_id == "my-platybill.domain.local"
 
     origins = resolve_expected_origins(req)  # type: ignore
-    assert "https://my-platybill.domain.local:3010" in origins
+    assert "https://evil.example.com" not in origins
     assert "http://my-platybill.domain.local:3010" in origins
+
+    with (
+        patch.object(settings, "environment", "production"),
+        patch.object(settings, "app_base_url", "https://bills.example.com"),
+        patch.object(settings, "webauthn_rp_id", "bills.example.com"),
+    ):
+        assert resolve_rp_id(req) == "bills.example.com"  # type: ignore
+        prod_origins = resolve_expected_origins(req)  # type: ignore
+        assert "https://bills.example.com" in prod_origins
+        assert "http://my-platybill.domain.local:3010" not in prod_origins
+        assert "https://evil.example.com" not in prod_origins
 
 
 def test_passkey_routes_unauthenticated_return_401(client):

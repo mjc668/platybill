@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     cookie_secure: bool = False
     trust_proxy: bool = False
+    registration_enabled: bool = True
 
     # Per-scope rate limits (in-memory sliding window, single process)
     login_rate_limit: int = 10

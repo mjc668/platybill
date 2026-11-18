@@ -133,3 +133,81 @@ def test_server_url_blocks_metadata_and_credentials():
         validate_server_url("gopher://host:70")
         == "URL must start with http:// or https://"
     )
+
+
+def test_global_settings_fail_closed_for_multi_user_without_import_email(client):
+    token1 = register_and_login(client, "owner1@test.com")
+    token2 = register_and_login(client, "owner2@test.com")
+
+    for token in (token1, token2):
+        assert client.get("/import/status", headers=auth(token)).status_code == 403
+        assert (
+            client.patch(
+                "/import/settings", json={"enabled": True}, headers=auth(token)
+            ).status_code
+            == 403
+        )
+        assert client.post("/import/scan-now", headers=auth(token)).status_code == 403
+        assert (
+            client.get("/notifications/settings", headers=auth(token)).status_code
+            == 403
+        )
+        assert (
+            client.patch(
+                "/notifications/settings",
+                json={"smtp": {"host": "evil.example.com"}},
+                headers=auth(token),
+            ).status_code
+            == 403
+        )
+
+
+def test_changing_host_clears_saved_credentials(client):
+    token = register_and_login(client, "credclear@test.com")
+
+    # Set SMTP + IMAP + LLM credentials
+    r1 = client.patch(
+        "/notifications/settings",
+        json={"smtp": {"host": "smtp.a.test", "password": "secret1"}},
+        headers=auth(token),
+    )
+    assert r1.status_code == 200
+    assert r1.json()["smtp_password_configured"] is True
+
+    # Changing SMTP host without supplying a new password clears the saved password
+    r2 = client.patch(
+        "/notifications/settings",
+        json={"smtp": {"host": "smtp.b.test"}},
+        headers=auth(token),
+    )
+    assert r2.status_code == 200
+    assert r2.json()["smtp_password_configured"] is False
+
+    # Same for IMAP and LLM base URL
+    r3 = client.patch(
+        "/import/settings",
+        json={
+            "imap_host": "imap.a.test",
+            "imap_user": "u@a.test",
+            "imap_password": "secret2",
+            "llm_provider": "opencode",
+            "llm_base_url": "http://llm-a.test/v1",
+            "llm_api_key": "secret3",
+        },
+        headers=auth(token),
+    )
+    assert r3.status_code == 200
+    assert r3.json()["imap_password_configured"] is True
+    assert r3.json()["llm_api_key_configured"] is True
+
+    r4 = client.patch(
+        "/import/settings",
+        json={
+            "imap_host": "imap.b.test",
+            "llm_base_url": "http://llm-b.test/v1",
+        },
+        headers=auth(token),
+    )
+    assert r4.status_code == 200
+    assert r4.json()["imap_password_configured"] is False
+    assert r4.json()["llm_api_key_configured"] is False

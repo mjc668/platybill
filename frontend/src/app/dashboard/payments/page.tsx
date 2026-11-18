@@ -21,7 +21,6 @@ import {
   syncInstances,
   type PaymentInstanceOut,
 } from "@/lib/payments-api";
-import { fetchImportDrafts } from "@/lib/imports-api";
 import { type Category } from "@/lib/categories-api";
 import { categoryValue, sortCategories } from "@/lib/categories";
 import { downloadXlsx } from "@/lib/export-api";
@@ -218,9 +217,9 @@ function PaymentsPageInner() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchImportDrafts(), fetchNeedsConfirmation()])
-      .then(([drafts, estimates]) => {
-        if (!cancelled) setReviewCount(drafts.length + estimates.length);
+    fetchNeedsConfirmation()
+      .then((estimates) => {
+        if (!cancelled) setReviewCount(estimates.length);
       })
       .catch(() => {
         if (!cancelled) setReviewCount(0);

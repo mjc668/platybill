@@ -40,6 +40,7 @@ export default function LoginPage() {
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [smtpConfigured, setSmtpConfigured] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState(false);
 
   const webAuthnSupported = useSyncExternalStore(
     subscribeNever,
@@ -67,6 +68,9 @@ export default function LoginPage() {
     apiFetch<{ configured: boolean }>("/auth/smtp-status")
       .then((data) => setSmtpConfigured(data?.configured ?? false))
       .catch(() => setSmtpConfigured(false));
+    apiFetch<{ enabled: boolean }>("/auth/registration-status")
+      .then((data) => setRegistrationEnabled(data?.enabled ?? false))
+      .catch(() => setRegistrationEnabled(false));
   }, []);
 
   // Strip ?session_expired so a manual refresh of this URL doesn't re-show the banner.
@@ -248,15 +252,17 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">
-          {t("noAccount")}{" "}
-          <Link
-            href="/register"
-            className="font-medium text-blue-700 hover:text-blue-800 dark:text-blue-500"
-          >
-            {t("register")}
-          </Link>
-        </p>
+        {registrationEnabled && (
+          <p className="mt-5 text-center text-sm text-slate-500 dark:text-slate-400">
+            {t("noAccount")}{" "}
+            <Link
+              href="/register"
+              className="font-medium text-blue-700 hover:text-blue-800 dark:text-blue-500"
+            >
+              {t("register")}
+            </Link>
+          </p>
+        )}
       </div>
     </main>
   );

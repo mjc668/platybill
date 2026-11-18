@@ -80,3 +80,21 @@ def optional_current_user(
     if not user or not user.is_active or token_version != user.token_version:
         return None
     return user
+
+
+def require_install_owner(db: Session, me: User) -> None:
+    """Fail-closed guard for process-wide settings (import, LLM, SMTP, Apprise, IMAP).
+
+    Only the import target account (IMPORT_USER_EMAIL, or the sole user on a
+    single-user install) may view or mutate install-global configuration.
+    When multiple users exist without IMPORT_USER_EMAIL set, reject all callers
+    rather than failing open.
+    """
+    from app.services.bill_import import resolve_import_user
+
+    target = resolve_import_user(db)
+    if target is None or target.id != me.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the install owner can access or change global settings",
+        )
