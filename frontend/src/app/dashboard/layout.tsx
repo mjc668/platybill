@@ -79,7 +79,7 @@ export default function DashboardLayout({
           </Link>
 
           {/* Desktop nav links */}
-          <nav className="hidden md:flex flex-1 items-center gap-1 ml-4">
+          <nav className="desktop-nav-only flex-1 items-center gap-1 ml-4">
             {NAV_ITEMS.map(({ href, labelKey, icon: Icon, exact }) => {
               const active = pathname === href || (!exact && pathname.startsWith(href + "/"));
               return (

@@ -22,10 +22,25 @@
     margin-bottom: env(safe-area-inset-bottom, 0px);
   }
   /* Extra bottom padding to clear the fixed mobile bottom navigation bar */
+  .mobile-nav-only {
+    display: block;
+  }
+  .desktop-nav-only {
+    display: none;
+  }
   .pb-mobile-nav {
     padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
   }
-  @media (min-width: 768px) {
+  /* Show desktop top nav on >=768px fine-pointer devices, or >=1024px outside
+     standalone PWA mode. Installed touch PWAs always keep the mobile nav. */
+  @media (min-width: 768px) and (pointer: fine),
+    (min-width: 1024px) and (not (display-mode: standalone)) {
+    .mobile-nav-only {
+      display: none;
+    }
+    .desktop-nav-only {
+      display: flex;
+    }
     .pb-mobile-nav {
       padding-bottom: 1.5rem;
     }
@@ -35,6 +50,7 @@
 html, body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
+  overflow-x: hidden;
 }
 
 body {

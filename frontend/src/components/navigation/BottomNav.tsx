@@ -27,7 +27,7 @@ export default function BottomNav() {
     <nav
       data-testid="mobile-bottom-nav"
       aria-label="Mobile navigation"
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 pb-safe"
+      className="mobile-nav-only fixed bottom-0 inset-x-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 pb-safe"
     >
       <div className="grid grid-cols-4 h-14">
         {ITEMS.map(({ href, labelKey, icon: Icon, exact }) => {
