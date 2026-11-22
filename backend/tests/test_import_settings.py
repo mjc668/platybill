@@ -153,6 +153,34 @@ def test_poll_directory_rejects_outside_path(client_db):
     assert "inside /data" in result["error"]
 
 
+def test_poll_directory_skips_oversized_file_without_reading(client_db, tmp_path):
+    client, db = client_db
+    register_and_login(client, "cfg_oversize@test.com")
+
+    watch = tmp_path / "import"
+    watch.mkdir()
+    big = watch / "big.png"
+    big.write_bytes(b"\x89PNG\r\n" + b"0" * 64)
+
+    with (
+        patch.object(settings, "data_dir", str(tmp_path)),
+        patch.object(settings, "import_enabled", True),
+        patch.object(settings, "import_dir", str(watch)),
+        patch.object(settings, "import_keep_files", False),
+        patch.object(settings, "import_max_file_mb", 0),
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch(
+            "app.services.bill_extract.generate_json", return_value=EXTRACTED
+        ) as mock_generate,
+    ):
+        result = poll_directory(db)
+    assert result["processed"] == 0
+    assert result["failed"] == 1
+    assert mock_generate.call_count == 0
+    assert (watch / "failed" / "big.png").exists()
+    assert db.query(ImportDraft).count() == 0
+
+
 def test_directory_tick_respects_interval(client_db):
     client, db = client_db
     register_and_login(client, "cfg4@test.com")

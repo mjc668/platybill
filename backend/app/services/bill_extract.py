@@ -380,7 +380,9 @@ def extract_bnpl_from_text(text: str, *, config: LlmConfig) -> ExtractedBnpl | N
     interval_count = payload.get("interval_count") or 2
     max_occurrences = payload.get("max_occurrences") or 4
     order_id = str(payload.get("order_id") or "UNKNOWN")
-    currency = str(payload.get("currency") or "AUD")
+    # Afterpay operates in AUD; the LLM must not override the currency from
+    # attacker-influenced email text. Human review sees the drafted value.
+    currency = "AUD"
 
     return ExtractedBnpl(
         merchant=merchant,

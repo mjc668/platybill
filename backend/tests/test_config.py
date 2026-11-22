@@ -115,3 +115,35 @@ def test_apprise_configured_needs_only_a_base_url():
         ).apprise_configured
         is True
     )
+
+
+def test_env_server_urls_reject_metadata_targets():
+    from app.services.app_settings import validate_server_url
+
+    for field in ("ollama_base_url", "llm_base_url", "apprise_base_url"):
+        for bad in (
+            "http://169.254.169.254/",
+            "http://metadata.google.internal/",
+            "http://user:pass@lan:11434/",
+            "http://100.100.100.200/",
+            "http://[fe80::1]/",
+        ):
+            with pytest.raises(ValidationError, match="not allowed|credentials"):
+                Settings(**{field: bad})
+    # Scheme check fires before host checks.
+    with pytest.raises(ValidationError, match="http"):
+        Settings(ollama_base_url="gopher://host:70")
+
+
+def test_env_server_urls_allow_lan_and_loopback():
+    s = Settings(
+        ollama_base_url="http://10.31.209.23:11434",
+        llm_base_url="https://api.openai.com/v1",
+        apprise_base_url="http://ollama:8000",
+    )
+    assert s.ollama_base_url == "http://10.31.209.23:11434"
+    assert s.llm_base_url == "https://api.openai.com/v1"
+    assert s.apprise_base_url == "http://ollama:8000"
+    from app.services.app_settings import validate_server_url
+
+    assert validate_server_url("http://10.31.209.23:11434") is None

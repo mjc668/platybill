@@ -56,7 +56,7 @@ class ImportSettingsIn(BaseModel):
     llm_model: str | None = Field(None, max_length=255)
     llm_base_url: str | None = Field(None, max_length=255)
     llm_api_key: str | None = Field(None, max_length=500)
-    llm_timeout_seconds: float | None = Field(None, ge=1, le=600)
+    llm_timeout_seconds: float | None = Field(None, ge=1, le=300)
     imap_host: str | None = Field(None, max_length=255)
     imap_port: int | None = Field(None, ge=1, le=65535)
     imap_user: str | None = Field(None, max_length=255)

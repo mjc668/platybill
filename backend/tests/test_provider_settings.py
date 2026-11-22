@@ -117,14 +117,17 @@ def test_server_url_allows_local_and_lan():
 def test_server_url_blocks_metadata_and_credentials():
     from app.services.app_settings import validate_server_url
 
-    assert (
-        validate_server_url("http://169.254.169.254/latest/meta-data")
-        == "URL host is not allowed"
-    )
-    assert (
-        validate_server_url("http://metadata.google.internal/")
-        == "URL host is not allowed"
-    )
+    for url in [
+        "http://100.100.100.200/",
+        "http://[fd00::1]/",
+        "http://2852039166/latest/meta-data",
+        "http://0xa9.0xfe.0xa9.0xfe/",
+        "http://100.64.0.5/",
+        "http://[fe80::1]/",
+        "http://169.254.169.254/latest/meta-data",
+        "http://metadata.google.internal/",
+    ]:
+        assert validate_server_url(url) == "URL host is not allowed", url
     assert (
         validate_server_url("http://user:pass@host:11434")
         == "URL must not include credentials"
@@ -133,6 +136,31 @@ def test_server_url_blocks_metadata_and_credentials():
         validate_server_url("gopher://host:70")
         == "URL must start with http:// or https://"
     )
+    assert validate_server_url("http://[::1]:11434") is None
+    assert validate_server_url("http://ollama:11434") is None
+
+
+def test_timeouts_clamp_to_300s(client_db):
+    from unittest.mock import patch
+
+    from app.core.config import settings
+    from app.services import app_settings
+
+    client, db = client_db
+    with (
+        patch.object(settings, "llm_timeout_seconds", 120.0),
+        patch.object(settings, "apprise_timeout_seconds", 10.0),
+    ):
+        app_settings.set_value(db, app_settings.LLM_TIMEOUT_KEY, "3600")
+        app_settings.set_value(db, app_settings.APPRISE_TIMEOUT_KEY, "600")
+        assert app_settings.llm_timeout(db) == 300.0
+        assert app_settings.apprise_timeout(db) == 300.0
+        app_settings.set_value(db, app_settings.LLM_TIMEOUT_KEY, "45")
+        assert app_settings.llm_timeout(db) == 45.0
+        # Env default above the cap is clamped too.
+        app_settings.set_value(db, app_settings.LLM_TIMEOUT_KEY, None)
+        with patch.object(settings, "llm_timeout_seconds", 900.0):
+            assert app_settings.llm_timeout(db) == 300.0
 
 
 def test_global_settings_fail_closed_for_multi_user_without_import_email(client):
@@ -211,3 +239,44 @@ def test_changing_host_clears_saved_credentials(client):
     assert r4.status_code == 200
     assert r4.json()["imap_password_configured"] is False
     assert r4.json()["llm_api_key_configured"] is False
+
+
+def test_changing_apprise_base_url_clears_saved_key_and_urls(client):
+    token = register_and_login(client, "appriseclear@test.com")
+
+    r1 = client.patch(
+        "/notifications/settings",
+        json={
+            "apprise": {
+                "base_url": "http://gw-a.test",
+                "urls": "ntfy://topic",
+                "key": "household",
+            }
+        },
+        headers=auth(token),
+    )
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["apprise_key_configured"] is True
+    assert r1.json()["apprise_urls_configured"] is True
+
+    # Gateway host change without replacement creds clears both.
+    r2 = client.patch(
+        "/notifications/settings",
+        json={"apprise": {"base_url": "http://gw-b.test"}},
+        headers=auth(token),
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["apprise_base_url"] == "http://gw-b.test"
+    assert r2.json()["apprise_key_configured"] is False
+    assert r2.json()["apprise_urls_configured"] is False
+
+    # Supplying a fresh key alongside the host change keeps it.
+    r3 = client.patch(
+        "/notifications/settings",
+        json={
+            "apprise": {"base_url": "http://gw-c.test", "key": "household2"},
+        },
+        headers=auth(token),
+    )
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["apprise_key_configured"] is True

@@ -146,6 +146,63 @@ def ollama_config(db: Session) -> OllamaConfig | None:
     )
 
 
+_METADATA_HOSTS = frozenset(
+    {"169.254.169.254", "100.100.100.200", "metadata.google.internal"}
+)
+# Networks that are never legitimate LLM/gateway targets: CGNAT shared space,
+# IPv6 ULA, and IPv6 link-local. IPv4 LAN/loopback stay allowed — self-hosted
+# services live there (IPv6 ULA has no legitimate use in this deployment).
+_BLOCKED_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd00::/8"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _canonicalize_ipv4_literal(host: str) -> str | None:
+    """Non-standard IPv4 literals → canonical dotted quad, else None.
+
+    `ipaddress` rejects decimal/octal/hex forms (e.g. ``2852039166``) that
+    the resolver may still accept, so normalize before the metadata check.
+    """
+    lowered = host.lower().rstrip(".")
+    parts = lowered.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    try:
+        nums = [_parse_ipv4_part(part) for part in parts]
+    except ValueError:
+        return None
+    widths = {1: (32,), 2: (8, 24), 3: (8, 8, 16), 4: (8, 8, 8, 8)}[len(nums)]
+    if any(num < 0 or num >= 1 << width for num, width in zip(nums, widths)):
+        return None
+    value = 0
+    for num, width in zip(nums, widths):
+        value = (value << width) | num
+    return str(ipaddress.IPv4Address(value))
+
+
+def _parse_ipv4_part(part: str) -> int:
+    """One dotted component: hex, C-octal (leading 0), or decimal."""
+    if not part:
+        raise ValueError(f"empty IPv4 component in {part!r}")
+    if part.startswith("0x"):
+        return int(part, 16)
+    if len(part) > 1 and part[0] == "0" and part.isdigit():
+        return int(part, 8)
+    return int(part, 10)
+
+
+def _ip_is_metadata(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    if ip.is_link_local:
+        return True
+    if str(ip) in _METADATA_HOSTS:
+        return True
+    return any(ip.version == net.version and ip in net for net in _BLOCKED_NETWORKS)
+
+
 def _host_is_metadata(host: str) -> bool:
     """True for cloud metadata / link-local endpoints (the SSRF targets).
 
@@ -153,13 +210,14 @@ def _host_is_metadata(host: str) -> bool:
     self-hosted app and Ollama typically runs on localhost or the LAN.
     """
     lowered = host.lower().rstrip(".")
-    if lowered in {"169.254.169.254", "metadata.google.internal"}:
+    if lowered in _METADATA_HOSTS:
         return True
+    candidate = _canonicalize_ipv4_literal(lowered) or lowered
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(candidate)
     except ValueError:
         return False
-    return ip.is_link_local
+    return _ip_is_metadata(ip)
 
 
 def _host_resolves_to_metadata(host: str) -> bool:
@@ -168,10 +226,10 @@ def _host_resolves_to_metadata(host: str) -> bool:
     Unresolvable hosts are allowed (e.g. docker service names in tests).
     """
     lowered = host.lower().rstrip(".")
-    if lowered in {"metadata.google.internal"}:
+    if lowered in _METADATA_HOSTS:
         return True
     try:
-        ipaddress.ip_address(host)
+        ipaddress.ip_address(_canonicalize_ipv4_literal(lowered) or lowered)
         return False  # literal IPs handled by _host_is_metadata
     except ValueError:
         pass
@@ -182,7 +240,7 @@ def _host_resolves_to_metadata(host: str) -> bool:
                 ip = ipaddress.ip_address(addr)
             except ValueError:
                 continue
-            if ip.is_link_local or str(ip) == "169.254.169.254":
+            if _ip_is_metadata(ip):
                 return True
     except socket.gaierror:
         pass
@@ -299,10 +357,10 @@ def apprise_timeout(db: Session) -> float:
     override = get_value(db, APPRISE_TIMEOUT_KEY)
     if override is not None:
         try:
-            return max(1.0, float(override))
+            return min(max(float(override), 1.0), 300.0)
         except ValueError:
             pass
-    return settings.apprise_timeout_seconds
+    return min(max(settings.apprise_timeout_seconds, 1.0), 300.0)
 
 
 def apprise_configured(db: Session) -> bool:
@@ -418,10 +476,10 @@ def llm_timeout(db: Session) -> float:
     override = get_value(db, LLM_TIMEOUT_KEY)
     if override is not None:
         try:
-            return max(1.0, float(override))
+            return min(max(float(override), 1.0), 300.0)
         except ValueError:
             pass
-    return settings.llm_timeout_seconds
+    return min(max(settings.llm_timeout_seconds, 1.0), 300.0)
 
 
 def llm_config(db: Session):

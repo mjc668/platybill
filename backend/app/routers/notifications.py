@@ -88,7 +88,15 @@ def update_notification_settings(
                 error = app_settings.validate_server_url(url)
                 if error:
                     raise HTTPException(status_code=422, detail=error)
-            app_settings.set_value(db, app_settings.APPRISE_BASE_URL_KEY, url or None)
+            new_base_url = url or None
+            if (
+                new_base_url != app_settings.apprise_base_url(db)
+                and apprise.urls is None
+                and apprise.key is None
+            ):
+                app_settings.set_value(db, app_settings.APPRISE_URLS_KEY, None)
+                app_settings.set_value(db, app_settings.APPRISE_KEY_KEY, None)
+            app_settings.set_value(db, app_settings.APPRISE_BASE_URL_KEY, new_base_url)
         if apprise.urls is not None:
             app_settings.set_value(
                 db, app_settings.APPRISE_URLS_KEY, apprise.urls.strip() or None

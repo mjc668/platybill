@@ -109,6 +109,38 @@ def test_upload_rejects_type_size_and_duplicates(client_db):
             assert _upload(client, token).status_code == 409
 
 
+def test_upload_rejects_spoofed_content_type_with_wrong_suffix(client_db):
+    client, db = client_db
+    token = register_and_login(client, "imp_suffix@test.com")
+    with patch.object(settings, "ollama_base_url", "http://ollama.test"):
+        # Correct content-type but a non-allowlisted filename is rejected.
+        r = _upload(client, token, name="bill.txt", ctype="application/pdf")
+        assert r.status_code == 415
+        # Uppercase suffix still accepted.
+        with patch("app.services.bill_extract.generate_json", return_value=EXTRACTED):
+            assert _upload(client, token, name="BILL.PNG", ctype=None).status_code in (
+                201,
+                409,
+            )
+
+
+def test_extract_bnpl_from_text_forces_aud_currency():
+    from app.services.bill_extract import extract_bnpl_from_text
+    from app.services.llm import LlmConfig
+
+    payload = {
+        "merchant": "Bing Lee",
+        "installment_amount": 71.50,
+        "start_date": "2026-11-01",
+        "currency": "USD",  # attacker-influenced: must be ignored
+    }
+    config = LlmConfig(provider="opencode", base_url="http://x", model="m")
+    with patch("app.services.bill_extract.generate_json", return_value=payload):
+        result = extract_bnpl_from_text("afterpay order", config=config)
+    assert result is not None
+    assert result.currency == "AUD"
+
+
 # ---------------------------------------------------------------------------
 # Confirm / discard
 # ---------------------------------------------------------------------------

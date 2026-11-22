@@ -377,6 +377,10 @@ def poll_directory(db: Session) -> dict[str, Any]:
         except OSError:
             continue
         try:
+            if path.stat().st_size > _max_bytes():
+                raise ValueError(
+                    f"File exceeds IMPORT_MAX_FILE_MB ({settings.import_max_file_mb})"
+                )
             data = path.read_bytes()
             draft = import_document(
                 db,

@@ -24,6 +24,7 @@ from app.schemas.imports import (
 from app.services import app_settings
 from app.services.bill_import import (
     ALLOWED_CONTENT_TYPES,
+    ALLOWED_SUFFIXES,
     confirm_draft,
     discard_draft,
     import_document,
@@ -79,6 +80,8 @@ def upload_bill(
         )
     content_type = file.content_type
     if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported file type")
+    if not (file.filename or "").lower().endswith(tuple(ALLOWED_SUFFIXES)):
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
     max_bytes = settings.import_max_file_mb * 1024 * 1024

@@ -1,5 +1,6 @@
+import ipaddress
 import warnings
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -7,6 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _DEFAULT_JWT_SECRET = "changeme-use-a-long-random-string"
 _MIN_JWT_SECRET_LENGTH = 32
 _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
+_METADATA_HOSTS = frozenset(
+    {"169.254.169.254", "100.100.100.200", "metadata.google.internal"}
+)
+_METADATA_SHARED_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 
 class Settings(BaseSettings):
@@ -136,19 +141,44 @@ class Settings(BaseSettings):
     def imap_configured(self) -> bool:
         return bool(self.imap_host and self.imap_user and self.imap_password)
 
-    @field_validator("ollama_base_url")
+    @field_validator("ollama_base_url", "apprise_base_url")
     @classmethod
-    def strip_ollama_base_url_trailing_slash(cls, v: str | None) -> str | None:
+    def strip_server_base_url_trailing_slash(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return v.rstrip("/")
 
-    @field_validator("apprise_base_url")
+    @field_validator("llm_base_url", "apprise_base_url", "ollama_base_url")
     @classmethod
-    def strip_apprise_base_url_trailing_slash(cls, v: str | None) -> str | None:
+    def reject_metadata_server_url(cls, v: str | None) -> str | None:
+        """Fail closed on metadata/link-local targets in env config.
+
+        Mirrors `app_settings.validate_server_url` without importing the
+        service layer (config must not depend on it): rejects non-http(s),
+        embedded credentials, and cloud metadata / link-local hosts. LAN
+        and loopback stay allowed for self-hosted services.
+        """
         if v is None:
             return None
-        return v.rstrip("/")
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        host = urlparse(v).hostname
+        if not host:
+            raise ValueError("URL must include a host")
+        if urlsplit(v).username or urlsplit(v).password:
+            raise ValueError("URL must not include credentials")
+        lowered = host.lower().rstrip(".")
+        if lowered in _METADATA_HOSTS:
+            raise ValueError("URL host is not allowed")
+        try:
+            parsed_ip = ipaddress.ip_address(lowered)
+        except ValueError:
+            parsed_ip = None
+        if parsed_ip is not None and (
+            parsed_ip.is_link_local or parsed_ip in _METADATA_SHARED_NETWORK
+        ):
+            raise ValueError("URL host is not allowed")
+        return v
 
     @field_validator("password_reset_token_expire_minutes")
     @classmethod
