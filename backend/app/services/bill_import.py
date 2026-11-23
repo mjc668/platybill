@@ -209,8 +209,24 @@ def _target_instance(
     bill: BillTemplate,
     period: str,
     *,
+    due_date: date | None = None,
     fallback_to_estimate: bool = False,
 ) -> PaymentInstance | None:
+    if due_date is not None:
+        # Prefer an exact due_date match (including paid instances so callers
+        # reject an already-paid instalment instead of falling back to another
+        # unpaid instalment in the same month).
+        by_due_date = (
+            db.query(PaymentInstance)
+            .filter(
+                PaymentInstance.bill_id == bill.id,
+                PaymentInstance.is_deleted.is_(False),
+                PaymentInstance.due_date == due_date,
+            )
+            .first()
+        )
+        if by_due_date is not None:
+            return by_due_date
     query = db.query(PaymentInstance).filter(
         PaymentInstance.bill_id == bill.id,
         PaymentInstance.is_deleted.is_(False),
@@ -263,7 +279,11 @@ def confirm_draft(
         "%Y-%m"
     )
     instance = _target_instance(
-        db, bill, period, fallback_to_estimate=fallback_to_estimate
+        db,
+        bill,
+        period,
+        due_date=draft.due_date,
+        fallback_to_estimate=fallback_to_estimate,
     )
     created = False
     if instance is None:
