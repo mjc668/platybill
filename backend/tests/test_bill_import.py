@@ -1024,3 +1024,222 @@ def test_two_phase_uses_text_ocr_then_extracts():
         assert mock_text.call_count == 1
         assert mock_json.call_count == 1
         assert result.amount == Decimal("87.30")
+
+
+# ---------------------------------------------------------------------------
+# Multi-template issuer disambiguation (due_day + service keywords)
+# ---------------------------------------------------------------------------
+
+
+def test_match_bill_disambiguates_same_issuer_by_due_day(client_db):
+    """Two templates sharing an issuer: due_day picks the second template."""
+    from app.services.bill_extract import ExtractedBill
+    from app.services.bill_import import match_bill
+
+    client, db = client_db
+    token = register_and_login(client, "imp_disambig_day@test.com")
+    user = db.query(User).filter(User.email == "imp_disambig_day@test.com").one()
+
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Rates",
+            "interval_count": 3,
+            "due_day": 30,
+        },
+    )
+    water = _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Water",
+            "interval_count": 3,
+            "due_day": 11,
+        },
+    )
+
+    extracted = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 11),
+        period="2026-12",
+        confidence=0.95,
+        raw_text=None,
+    )
+    assert match_bill(db, user.id, extracted) == water["id"]
+
+
+def test_match_bill_disambiguates_same_issuer_by_service_keyword(client_db):
+    """Service keywords in extracted text disambiguate same-issuer templates."""
+    from app.services.bill_extract import ExtractedBill
+    from app.services.bill_import import match_bill
+
+    client, db = client_db
+    token = register_and_login(client, "imp_disambig_kw@test.com")
+    user = db.query(User).filter(User.email == "imp_disambig_kw@test.com").one()
+
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Rates",
+            "interval_count": 3,
+            "due_day": 30,
+        },
+    )
+    water = _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Water",
+            "interval_count": 3,
+            "due_day": 11,
+        },
+    )
+
+    extracted = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 18),  # matches neither template's due_day
+        period="2026-12",
+        confidence=0.95,
+        raw_text="Goulburn Mulwaree Council Water & Sewer Usage Account",
+    )
+    assert match_bill(db, user.id, extracted) == water["id"]
+
+
+def test_match_bill_stays_unmatched_when_same_issuer_ambiguous(client_db):
+    """When neither due_day nor service keywords break a tie, stay unmatched."""
+    from app.services.bill_extract import ExtractedBill
+    from app.services.bill_import import match_bill
+
+    client, db = client_db
+    token = register_and_login(client, "imp_disambig_tie@test.com")
+    user = db.query(User).filter(User.email == "imp_disambig_tie@test.com").one()
+
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Rates",
+            "interval_count": 3,
+            "due_day": 30,
+        },
+    )
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Water",
+            "interval_count": 3,
+            "due_day": 11,
+        },
+    )
+
+    ambiguous = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 20),  # matches neither 30 nor 11
+        period="2026-12",
+        confidence=0.95,
+        raw_text=None,
+    )
+    assert match_bill(db, user.id, ambiguous) is None
+
+
+def test_match_bill_rejects_service_contradiction_on_rates_template(client_db):
+    """A water notice must never match a council rates template."""
+    from app.services.bill_extract import ExtractedBill
+    from app.services.bill_import import match_bill
+
+    client, db = client_db
+    token = register_and_login(client, "imp_disambig_conflict@test.com")
+    user = db.query(User).filter(User.email == "imp_disambig_conflict@test.com").one()
+
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Rates",
+            "interval_count": 3,
+            "due_day": 30,
+        },
+    )
+    water = _create_bill(
+        client,
+        token,
+        {
+            "name": "Water",
+            "interval_count": 3,
+            "due_day": 11,
+            "notes": None,
+        },
+    )
+
+    extracted = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 11),
+        period="2026-12",
+        confidence=0.95,
+        raw_text="Goulburn Mulwaree Council Water Notice",
+    )
+    # Without council name in Water's name/notes, Rates must NOT be matched.
+    assert match_bill(db, user.id, extracted) is None
+
+    # With council name in Water's notes, it disambiguates onto Water.
+    water_row = db.get(BillTemplate, water["id"])
+    assert water_row is not None
+    water_row.notes = "Goulburn Mulwaree Council"
+    db.commit()
+    assert match_bill(db, user.id, extracted) == water["id"]
+
+
+def test_upload_same_issuer_water_notice_lands_on_water_not_rates(client_db):
+    """End-to-end upload: notice due day 11 matches second template and stays pending."""
+    client, db = client_db
+    token = register_and_login(client, "imp_disambig_e2e@test.com")
+
+    _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Rates",
+            "interval_count": 3,
+            "due_day": 30,
+        },
+    )
+    water = _create_bill(
+        client,
+        token,
+        {
+            "name": "Goulburn Mulwaree Council Water",
+            "interval_count": 3,
+            "due_day": 11,
+        },
+    )
+
+    notice = {
+        "provider": "Goulburn Mulwaree Council",
+        "amount": 574.13,
+        "currency": "AUD",
+        "due_date": "2026-12-11",
+        "period": "2026-12",
+        "confidence": 0.95,
+    }
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=notice),
+    ):
+        r = _upload(client, token, name="water-notice.png")
+
+    assert r.status_code == 201, r.text
+    draft = r.json()
+    assert draft["status"] == "pending"
+    assert draft["matched_bill_id"] == water["id"]
+    assert draft["matched_bill_name"] == "Goulburn Mulwaree Council Water"
