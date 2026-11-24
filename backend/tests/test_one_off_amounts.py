@@ -31,16 +31,29 @@ def test_create_one_off_ignores_amount_varies(client_db):
     assert r.json()["amount_varies"] is False
 
 
-def test_update_one_off_forces_amount_varies_off(client_db):
+def test_update_one_off_rejects_amount_varies_and_conversion_clears_it(client_db):
     client, _ = client_db
     token = register_and_login(client, "oneoff2@test.com")
     bill_id = client.post("/bills", json=_BILL, headers=auth(token)).json()["id"]
 
+    # Explicitly enabling amount_varies on a one_off bill is rejected, never silently dropped.
     r = client.patch(
         f"/bills/{bill_id}", json={"amount_varies": True}, headers=auth(token)
     )
-    assert r.status_code == 200, r.text
-    assert r.json()["amount_varies"] is False
+    assert r.status_code == 422, r.text
+    assert "amount_varies" in r.text
+
+    # Converting a variable recurring bill to one_off clears amount_varies.
+    var_id = client.post(
+        "/bills",
+        json={**_BILL, "frequency": "monthly", "amount_varies": True},
+        headers=auth(token),
+    ).json()["id"]
+    r2 = client.patch(
+        f"/bills/{var_id}", json={"frequency": "one_off"}, headers=auth(token)
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["amount_varies"] is False
 
 
 def test_one_off_instance_is_visible_immediately(client_db):

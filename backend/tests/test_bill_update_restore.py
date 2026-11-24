@@ -709,3 +709,131 @@ def test_patch_amount_skips_instances_with_partial_events(client_db):
 
     db.expire_all()
     assert float(db.get(PaymentInstance, partial.id).amount) == pytest.approx(120.00)
+
+
+# ---------------------------------------------------------------------------
+# PATCH /bills/{id} — never silently ignore fields
+# ---------------------------------------------------------------------------
+
+
+def test_patch_single_field_due_month_updates_monthly_bill(client_db):
+    """Single-field due_month PATCH on a monthly bill updates start_period."""
+    client, _ = client_db
+    token = register_and_login(client, "patch_due_month@test.com")
+    bill_id = _create_bill(client, token, {"frequency": "monthly", "interval_count": 3})
+
+    target_month = 9 if date.today().month != 9 else 3
+    r = client.patch(
+        f"/bills/{bill_id}", json={"due_month": target_month}, headers=auth(token)
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["due_month"] == target_month
+    assert data["start_period"].endswith(f"-{target_month:02d}")
+
+
+def test_patch_single_field_amount_varies_on_one_off_returns_422(client_db):
+    """Enabling amount_varies on a one_off bill rejects with 422 naming the field."""
+    client, _ = client_db
+    token = register_and_login(client, "patch_oneoff_var@test.com")
+    bill_id = _create_bill(client, token, {"frequency": "one_off"})
+
+    r = client.patch(
+        f"/bills/{bill_id}", json={"amount_varies": True}, headers=auth(token)
+    )
+    assert r.status_code == 422, r.text
+    assert "amount_varies" in r.text
+
+    # Changing frequency to monthly in the same PATCH makes amount_varies valid.
+    r2 = client.patch(
+        f"/bills/{bill_id}",
+        json={
+            "frequency": "monthly",
+            "interval_count": 3,
+            "amount_varies": True,
+            "due_month": 9,
+        },
+        headers=auth(token),
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["amount_varies"] is True
+    assert r2.json()["due_month"] == 9
+
+
+def test_patch_single_field_inapplicable_schedule_fields_return_422(client_db):
+    """Sending an inapplicable field for the bill's frequency returns 422 naming it."""
+    client, _ = client_db
+    token = register_and_login(client, "patch_inapplicable@test.com")
+
+    monthly_id = _create_bill(client, token, {"frequency": "monthly"})
+    r = client.patch(
+        f"/bills/{monthly_id}",
+        json={"start_date": "2026-09-11"},
+        headers=auth(token),
+    )
+    assert r.status_code == 422, r.text
+    assert "start_date" in r.text
+
+    weekly_id = _create_bill(
+        client,
+        token,
+        {"frequency": "weekly", "start_date": "2026-09-11", "due_day": None},
+    )
+    r_day = client.patch(
+        f"/bills/{weekly_id}", json={"due_day": 11}, headers=auth(token)
+    )
+    assert r_day.status_code == 422, r_day.text
+    assert "due_day" in r_day.text
+
+    r_month = client.patch(
+        f"/bills/{weekly_id}", json={"due_month": 9}, headers=auth(token)
+    )
+    assert r_month.status_code == 422, r_month.text
+    assert "due_month" in r_month.text
+
+    one_off_id = _create_bill(client, token, {"frequency": "one_off"})
+    r_int = client.patch(
+        f"/bills/{one_off_id}", json={"interval_count": 3}, headers=auth(token)
+    )
+    assert r_int.status_code == 422, r_int.text
+    assert "interval_count" in r_int.text
+
+    r_cap = client.patch(
+        f"/bills/{one_off_id}", json={"max_occurrences": 4}, headers=auth(token)
+    )
+    assert r_cap.status_code == 422, r_cap.text
+    assert "max_occurrences" in r_cap.text
+
+
+def test_patch_unknown_field_returns_422(client_db):
+    """Unknown fields on PATCH /bills/{id} are rejected rather than silently ignored."""
+    client, _ = client_db
+    token = register_and_login(client, "patch_unknown@test.com")
+    bill_id = _create_bill(client, token)
+
+    r = client.patch(
+        f"/bills/{bill_id}", json={"nonexistent_field": 123}, headers=auth(token)
+    )
+    assert r.status_code == 422, r.text
+    assert "nonexistent_field" in r.text
+
+
+def test_patch_monthly_with_unchanged_due_month_preserves_start_period_year(client_db):
+    """Sending the existing due_month on an unrelated edit preserves start_period year."""
+    from app.models.bill import BillTemplate
+
+    client, db = client_db
+    token = register_and_login(client, "patch_preserve_year@test.com")
+    bill_id = _create_bill(client, token, {"frequency": "monthly", "interval_count": 3})
+    bill = db.get(BillTemplate, bill_id)
+    assert bill is not None
+    bill.start_period = "2024-09"
+    db.commit()
+
+    r = client.patch(
+        f"/bills/{bill_id}",
+        json={"amount": "140.00", "due_month": 9},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["start_period"] == "2024-09"

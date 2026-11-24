@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     computed_field,
     field_validator,
@@ -60,6 +61,8 @@ class BillTemplateCreate(BaseModel):
 
 
 class BillTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(None, max_length=255)
     category_id: int | None = None  # preferred
     category: str | None = None  # legacy default-key string, resolved server-side
