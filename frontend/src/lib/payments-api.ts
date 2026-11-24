@@ -41,8 +41,13 @@ export interface PendingConfirmationOut extends PaymentInstanceOut {
   basis_amounts: string[];
 }
 
-export function fetchNeedsConfirmation(): Promise<PendingConfirmationOut[]> {
-  return apiFetch<PendingConfirmationOut[]>("/bills/payments/needs-confirmation");
+export function fetchNeedsConfirmation(
+  includeFuture = true,
+): Promise<PendingConfirmationOut[]> {
+  const qs = includeFuture ? "?include_future=true" : "";
+  return apiFetch<PendingConfirmationOut[]>(
+    `/bills/payments/needs-confirmation${qs}`,
+  );
 }
 
 export function confirmInstanceAmount(
@@ -64,15 +69,21 @@ export function syncInstances(month: string): Promise<void> {
 export function fetchPayments(
   month: string,
   includeOverdue = false,
+  includeEstimated = true,
 ): Promise<PaymentInstanceOut[]> {
-  const query = `/bills/payments?month=${encodeURIComponent(month)}${
-    includeOverdue ? "&include_overdue=true" : ""
-  }`;
-  return apiFetch<PaymentInstanceOut[]>(query);
+  const params = new URLSearchParams({ month });
+  if (includeOverdue) params.set("include_overdue", "true");
+  if (includeEstimated) params.set("include_estimated", "true");
+  return apiFetch<PaymentInstanceOut[]>(`/bills/payments?${params.toString()}`);
 }
 
-export function fetchDueSoon(windowDays = 30): Promise<PaymentInstanceOut[]> {
-  return apiFetch<PaymentInstanceOut[]>(`/bills/payments?window_days=${windowDays}`);
+export function fetchDueSoon(
+  windowDays = 30,
+  includeEstimated = true,
+): Promise<PaymentInstanceOut[]> {
+  const params = new URLSearchParams({ window_days: String(windowDays) });
+  if (includeEstimated) params.set("include_estimated", "true");
+  return apiFetch<PaymentInstanceOut[]>(`/bills/payments?${params.toString()}`);
 }
 
 export function markPaid(

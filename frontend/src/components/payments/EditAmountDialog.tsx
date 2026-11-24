@@ -65,10 +65,12 @@ export default function EditAmountDialog({
           id="edit-amount-dialog-title"
           className="mb-1 text-lg font-semibold text-slate-800 dark:text-slate-100"
         >
-          {t("title", { billName: instance.bill_name })}
+          {t(instance.amount_estimated ? "confirmTitle" : "title", {
+            billName: instance.bill_name,
+          })}
         </h2>
         <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-          {t("description")}
+          {t(instance.amount_estimated ? "confirmDescription" : "description")}
         </p>
 
         <label
@@ -105,7 +107,9 @@ export default function EditAmountDialog({
             disabled={isSaving}
             className="flex-1 rounded-xl border border-blue-700 bg-blue-700 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:opacity-50"
           >
-            {isSaving ? t("saving") : t("save")}
+            {isSaving
+              ? t("saving")
+              : t(instance.amount_estimated ? "confirmSave" : "save")}
           </button>
         </div>
       </div>

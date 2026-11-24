@@ -74,7 +74,9 @@ export function useNotifications(): {
 
     let payments;
     try {
-      payments = await fetchPayments(month);
+      // Keep browser due-today alerts consistent with backend reminders:
+      // only notify for confirmed amounts, not unconfirmed estimates.
+      payments = await fetchPayments(month, false, false);
     } catch (err) {
       console.error("[useNotifications] fetchPayments failed:", err);
       return;

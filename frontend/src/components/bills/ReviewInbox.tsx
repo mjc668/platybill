@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, Inbox, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, Inbox, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import {
   confirmImportDraft,
@@ -26,12 +26,27 @@ interface Props {
   onJumpToMonth: (month: string) => void;
 }
 
+const FUTURE_ESTIMATE_CAP = 3;
+
+function getCurrentMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function monthLabel(period: string, locale: string): string {
   const [year, month] = period.split("-").map(Number);
   const label = new Intl.DateTimeFormat(locale, {
     month: "long",
     year: "numeric",
   }).format(new Date(year, month - 1));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function formatDueDay(dueDate: string, locale: string): string {
+  const label = new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "short",
+  }).format(new Date(dueDate + "T00:00:00"));
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -48,11 +63,14 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+
+  const currentMonth = getCurrentMonth();
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetchNeedsConfirmation(),
+      fetchNeedsConfirmation(true),
       fetchImportDrafts(),
       fetchBills(),
       fetchCategories(),
@@ -75,7 +93,33 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
     };
   }, [refreshToken, reload, t]);
 
-  const total = estimates.length + imports.length;
+  const dueNowEstimates = useMemo(
+    () => estimates.filter((estimate) => estimate.period <= currentMonth),
+    [estimates, currentMonth],
+  );
+  const upcomingEstimates = useMemo(
+    () => estimates.filter((estimate) => estimate.period > currentMonth),
+    [estimates, currentMonth],
+  );
+  const visibleUpcoming = showAllUpcoming
+    ? upcomingEstimates
+    : upcomingEstimates.slice(0, FUTURE_ESTIMATE_CAP);
+  const hiddenUpcomingCount = upcomingEstimates.length - visibleUpcoming.length;
+  const upcomingByMonth = useMemo(() => {
+    const groups: { period: string; items: PendingConfirmationOut[] }[] = [];
+    for (const estimate of visibleUpcoming) {
+      const last = groups[groups.length - 1];
+      if (last && last.period === estimate.period) {
+        last.items.push(estimate);
+      } else {
+        groups.push({ period: estimate.period, items: [estimate] });
+      }
+    }
+    return groups;
+  }, [visibleUpcoming]);
+
+  const urgentCount = imports.length + dueNowEstimates.length;
+  const total = urgentCount + upcomingEstimates.length;
   const defaultCategoryId = useMemo(() => {
     const preferred = categories.find((category) => category.key === "utilities");
     return (preferred ?? categories[0])?.id ?? null;
@@ -100,7 +144,9 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
       <div className="mb-3 flex items-center gap-2">
         <Inbox size={16} className="text-blue-600 dark:text-blue-400" />
         <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300">
-          {t("title", { count: total })}
+          {urgentCount > 0
+            ? t("title", { count: urgentCount })
+            : t("upcomingOnlyTitle", { count: upcomingEstimates.length })}
         </h2>
       </div>
 
@@ -133,40 +179,107 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
         </div>
       )}
 
-      <ul className="flex flex-col gap-2">
-        {imports.map((draft) => (
-          <ImportRow
-            key={`import-${draft.id}`}
-            draft={draft}
-            bills={bills}
-            categories={categories}
-            defaultCategoryId={defaultCategoryId}
-            defaultCurrency={defaultCurrency}
-            busy={busyId === `import-${draft.id}`}
-            onBusy={(busy) => setBusyId(busy ? `import-${draft.id}` : null)}
-            onError={setError}
-            onDone={(period) =>
-              finish(period, () =>
-                setImports((prev) => prev.filter((item) => item.id !== draft.id)),
-              )
-            }
-          />
-        ))}
-        {estimates.map((estimate) => (
-          <EstimateRow
-            key={`estimate-${estimate.id}`}
-            estimate={estimate}
-            busy={busyId === `estimate-${estimate.id}`}
-            onBusy={(busy) => setBusyId(busy ? `estimate-${estimate.id}` : null)}
-            onError={setError}
-            onDone={() =>
-              finish(estimate.period, () =>
-                setEstimates((prev) => prev.filter((item) => item.id !== estimate.id)),
-              )
-            }
-          />
-        ))}
-      </ul>
+      {urgentCount > 0 && (
+        <ul className="flex flex-col gap-2">
+          {imports.map((draft) => (
+            <ImportRow
+              key={`import-${draft.id}`}
+              draft={draft}
+              bills={bills}
+              categories={categories}
+              defaultCategoryId={defaultCategoryId}
+              defaultCurrency={defaultCurrency}
+              busy={busyId === `import-${draft.id}`}
+              onBusy={(busy) => setBusyId(busy ? `import-${draft.id}` : null)}
+              onError={setError}
+              onDone={(period) =>
+                finish(period, () =>
+                  setImports((prev) => prev.filter((item) => item.id !== draft.id)),
+                )
+              }
+            />
+          ))}
+          {dueNowEstimates.map((estimate) => (
+            <EstimateRow
+              key={`estimate-${estimate.id}`}
+              estimate={estimate}
+              isFuture={false}
+              busy={busyId === `estimate-${estimate.id}`}
+              onBusy={(busy) => setBusyId(busy ? `estimate-${estimate.id}` : null)}
+              onError={setError}
+              onDone={() =>
+                finish(estimate.period, () =>
+                  setEstimates((prev) => prev.filter((item) => item.id !== estimate.id)),
+                )
+              }
+            />
+          ))}
+        </ul>
+      )}
+
+      {upcomingEstimates.length > 0 && (
+        <details
+          key={urgentCount === 0 ? "upcoming-only" : "with-urgent"}
+          open={urgentCount === 0}
+          data-testid="future-estimates-disclosure"
+          className={`group ${urgentCount > 0 ? "mt-3 border-t border-blue-200/70 pt-3 dark:border-blue-900/50" : ""}`}
+        >
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-amber-800 select-none dark:text-amber-300 [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              size={14}
+              aria-hidden="true"
+              className="shrink-0 transition-transform duration-150 group-open:rotate-90"
+            />
+            <span>
+              {t("upcomingEstimatesSummary", {
+                count: upcomingEstimates.length,
+              })}
+            </span>
+          </summary>
+
+          <div className="mt-2.5 flex flex-col gap-3">
+            {upcomingByMonth.map((group) => (
+              <div key={group.period} className="flex flex-col gap-1.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  {monthLabel(group.period, locale)}
+                </h3>
+                <ul className="flex flex-col gap-2">
+                  {group.items.map((estimate) => (
+                    <EstimateRow
+                      key={`estimate-${estimate.id}`}
+                      estimate={estimate}
+                      isFuture={true}
+                      busy={busyId === `estimate-${estimate.id}`}
+                      onBusy={(busy) =>
+                        setBusyId(busy ? `estimate-${estimate.id}` : null)
+                      }
+                      onError={setError}
+                      onDone={() =>
+                        finish(estimate.period, () =>
+                          setEstimates((prev) =>
+                            prev.filter((item) => item.id !== estimate.id),
+                          ),
+                        )
+                      }
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {upcomingEstimates.length > FUTURE_ESTIMATE_CAP && (
+              <button
+                type="button"
+                onClick={() => setShowAllUpcoming((prev) => !prev)}
+                className="self-start rounded-lg border border-dashed border-amber-300 bg-white/80 px-2.5 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-50 dark:border-amber-700/70 dark:bg-slate-800/80 dark:text-amber-300 dark:hover:bg-amber-900/25"
+              >
+                {showAllUpcoming
+                  ? t("showFewerUpcoming")
+                  : t("showMoreUpcoming", { count: hiddenUpcomingCount })}
+              </button>
+            )}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -185,12 +298,14 @@ function Badge({ children, tone }: { children: ReactNode; tone: "amber" | "blue"
 
 function EstimateRow({
   estimate,
+  isFuture,
   busy,
   onBusy,
   onError,
   onDone,
 }: {
   estimate: PendingConfirmationOut;
+  isFuture: boolean;
   busy: boolean;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
@@ -219,16 +334,27 @@ function EstimateRow({
   }
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-white px-3 py-2 dark:border-amber-900/40 dark:bg-slate-800">
+    <li
+      data-testid={isFuture ? "future-estimate-row" : "estimate-row"}
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-2 dark:bg-slate-800 ${
+        isFuture
+          ? "border-dashed border-amber-300/80 dark:border-amber-800/60"
+          : "border-amber-200/70 dark:border-amber-900/40"
+      }`}
+    >
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
             {estimate.bill_name}
           </p>
-          <Badge tone="amber">{t("estimateBadge")}</Badge>
+          <Badge tone="amber">
+            {isFuture ? t("upcomingEstimateBadge") : t("estimateBadge")}
+          </Badge>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          {monthLabel(estimate.period, locale)}
+          {isFuture
+            ? t("dueOn", { date: formatDueDay(estimate.due_date, locale) })
+            : monthLabel(estimate.period, locale)}
           {estimate.basis_amounts.length > 0
             ? ` · ${t("basis", {
                 amounts: estimate.basis_amounts
@@ -240,6 +366,12 @@ function EstimateRow({
       </div>
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-600 dark:bg-slate-900/40">
+          <span
+            aria-hidden="true"
+            className="text-xs font-medium text-amber-700 dark:text-amber-400"
+          >
+            ~
+          </span>
           <input
             aria-label={t("amountLabel")}
             type="number"
