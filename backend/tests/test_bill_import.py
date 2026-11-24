@@ -449,6 +449,216 @@ def test_confirm_afterpay_draft(client_db):
     assert draft.matched_bill_id == bill_id
 
 
+def test_confirm_matches_exact_due_date_for_multi_instance_month(client_db):
+    """When a bill has multiple unpaid instances in the same month (e.g. Afterpay
+    fortnightly instalments), confirming a draft must update the instalment with
+    the matching due_date rather than the earliest instance in that period."""
+    client, db = client_db
+    token = register_and_login(client, "imp_multi_inst@test.com")
+    user = db.query(User).filter(User.email == "imp_multi_inst@test.com").one()
+
+    r = client.post(
+        "/bills",
+        json={
+            "name": "Afterpay: Bing Lee",
+            "frequency": "weekly",
+            "interval_count": 2,
+            "max_occurrences": 4,
+            "start_date": "2026-11-01",
+            "amount": "71.50",
+            "category": "other",
+        },
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    bill_id = r.json()["id"]
+
+    # Seed November 2026 — creates 2026-11-01, 2026-11-15, and 2026-11-29.
+    sync_payments(client, token, "2026-11")
+    instances = (
+        db.query(PaymentInstance)
+        .filter(PaymentInstance.bill_id == bill_id)
+        .order_by(PaymentInstance.due_date)
+        .all()
+    )
+    assert [inst.due_date for inst in instances] == [
+        date(2026, 11, 1),
+        date(2026, 11, 15),
+        date(2026, 11, 29),
+    ]
+    first, second, third = instances
+
+    draft = ImportDraft(
+        user_id=user.id,
+        source=ImportSource.email,
+        source_ref="email:<afterpay-inst2@example>:0",
+        provider="Afterpay: Bing Lee",
+        amount=Decimal("75.25"),
+        currency="AUD",
+        due_date=date(2026, 11, 15),
+        period="2026-11",
+        matched_bill_id=bill_id,
+        status=ImportStatus.pending,
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+
+    r_conf = client.post(
+        f"/import/drafts/{draft.id}/confirm", json={}, headers=auth(token)
+    )
+    assert r_conf.status_code == 200, r_conf.text
+    result = r_conf.json()
+    assert result["created_instance"] is False
+    assert result["instance_id"] == second.id
+
+    db.refresh(first)
+    db.refresh(second)
+    db.refresh(third)
+    assert first.amount == Decimal("71.50")
+    assert second.amount == Decimal("75.25")
+    assert second.amount_estimated is False
+    assert third.amount == Decimal("71.50")
+
+
+def test_confirm_exact_due_date_paid_does_not_overwrite_earlier_instalment(client_db):
+    """If the instalment matching due_date is already paid, confirm_draft must
+    reject it instead of falling back to an earlier unpaid instalment in the
+    same month."""
+    client, db = client_db
+    token = register_and_login(client, "imp_multi_paid@test.com")
+    user = db.query(User).filter(User.email == "imp_multi_paid@test.com").one()
+
+    r = client.post(
+        "/bills",
+        json={
+            "name": "Afterpay: Paid Second",
+            "frequency": "weekly",
+            "interval_count": 2,
+            "max_occurrences": 4,
+            "start_date": "2026-11-01",
+            "amount": "71.50",
+            "category": "other",
+        },
+        headers=auth(token),
+    )
+    assert r.status_code == 201, r.text
+    bill_id = r.json()["id"]
+
+    sync_payments(client, token, "2026-11")
+    instances = (
+        db.query(PaymentInstance)
+        .filter(PaymentInstance.bill_id == bill_id)
+        .order_by(PaymentInstance.due_date)
+        .all()
+    )
+    first, second = instances[0], instances[1]
+    second.status = PaymentStatus.paid
+    db.commit()
+
+    draft = ImportDraft(
+        user_id=user.id,
+        source=ImportSource.email,
+        source_ref="email:<afterpay-paid2@example>:0",
+        provider="Afterpay: Paid Second",
+        amount=Decimal("80.00"),
+        currency="AUD",
+        due_date=date(2026, 11, 15),
+        period="2026-11",
+        matched_bill_id=bill_id,
+        status=ImportStatus.pending,
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+
+    r_conf = client.post(
+        f"/import/drafts/{draft.id}/confirm", json={}, headers=auth(token)
+    )
+    assert r_conf.status_code == 422, r_conf.text
+    assert "already paid" in r_conf.json()["detail"].lower()
+
+    db.refresh(first)
+    db.refresh(second)
+    assert first.amount == Decimal("71.50")
+    assert second.amount == Decimal("71.50")
+
+
+def test_confirm_monthly_bill_still_falls_back_to_period(client_db):
+    """Monthly bills whose draft due_date differs from the scheduled due_day
+    (or is omitted) must still match the month's instance via the period fallback."""
+    client, db = client_db
+    token = register_and_login(client, "imp_monthly_fb@test.com")
+    user = db.query(User).filter(User.email == "imp_monthly_fb@test.com").one()
+    bill = _create_bill(client, token)  # monthly, due_day=12, amount_varies=True
+
+    today = date.today()
+    period = today.strftime("%Y-%m")
+    sync_payments(client, token, period)
+    existing = (
+        db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill["id"]).one()
+    )
+    assert existing.due_date == today.replace(day=12)
+    assert existing.amount_estimated is True
+
+    # Different due_date in the same month falls back to period match.
+    draft_diff_day = ImportDraft(
+        user_id=user.id,
+        source=ImportSource.upload,
+        source_ref="upload:monthly-diff-day",
+        provider="Sydney Water",
+        amount=Decimal("92.40"),
+        currency="AUD",
+        due_date=today.replace(day=20),
+        period=period,
+        matched_bill_id=bill["id"],
+        status=ImportStatus.pending,
+    )
+    db.add(draft_diff_day)
+    db.commit()
+    db.refresh(draft_diff_day)
+
+    r_conf = client.post(
+        f"/import/drafts/{draft_diff_day.id}/confirm", json={}, headers=auth(token)
+    )
+    assert r_conf.status_code == 200, r_conf.text
+    result = r_conf.json()
+    assert result["created_instance"] is False
+    assert result["instance_id"] == existing.id
+
+    db.refresh(existing)
+    assert existing.amount == Decimal("92.40")
+    assert existing.amount_estimated is False
+
+    # Omitted due_date with explicit period also falls back to period match.
+    draft_no_due = ImportDraft(
+        user_id=user.id,
+        source=ImportSource.upload,
+        source_ref="upload:monthly-no-due",
+        provider="Sydney Water",
+        amount=Decimal("95.10"),
+        currency="AUD",
+        due_date=None,
+        period=period,
+        matched_bill_id=bill["id"],
+        status=ImportStatus.pending,
+    )
+    db.add(draft_no_due)
+    db.commit()
+    db.refresh(draft_no_due)
+
+    r_conf2 = client.post(
+        f"/import/drafts/{draft_no_due.id}/confirm", json={}, headers=auth(token)
+    )
+    assert r_conf2.status_code == 200, r_conf2.text
+    result2 = r_conf2.json()
+    assert result2["created_instance"] is False
+    assert result2["instance_id"] == existing.id
+
+    db.refresh(existing)
+    assert existing.amount == Decimal("95.10")
+
+
 # ---------------------------------------------------------------------------
 # Status endpoints
 # ---------------------------------------------------------------------------
