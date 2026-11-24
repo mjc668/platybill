@@ -282,6 +282,7 @@ def list_payments(
     month: str | None = None,  # "YYYY-MM"
     include_overdue: bool = Query(False),
     window_days: int | None = Query(None, ge=1, le=365),
+    include_estimated: bool = Query(False),
     db: Session = Depends(get_db),
     ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
@@ -320,6 +321,25 @@ def list_payments(
     else:
         scope = PaymentInstance.period == month
 
+    filters = [
+        BillTemplate.user_id == ws.owner_id,
+        BillTemplate.is_deleted.is_(False),
+        # Archived bills are quiet: their untouched pending rows stay out
+        # of the list until the bill is unarchived. Rows with payment
+        # events (paid or partially paid) remain visible as history.
+        or_(
+            BillTemplate.is_archived.is_(False),
+            PaymentInstance.status == PaymentStatus.paid,
+            PaymentInstance.payments.any(),
+        ),
+        PaymentInstance.is_deleted.is_(False),
+        scope,
+    ]
+    if not include_estimated:
+        # Estimated variable-bill instances stay out of the normal list
+        # until their amount is confirmed (see /payments/needs-confirmation).
+        filters.append(PaymentInstance.amount_estimated.is_(False))
+
     instances = (
         db.query(PaymentInstance)
         .options(
@@ -330,23 +350,7 @@ def list_payments(
             selectinload(PaymentInstance.payments),
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
-        .filter(
-            BillTemplate.user_id == ws.owner_id,
-            BillTemplate.is_deleted.is_(False),
-            # Archived bills are quiet: their untouched pending rows stay out
-            # of the list until the bill is unarchived. Rows with payment
-            # events (paid or partially paid) remain visible as history.
-            or_(
-                BillTemplate.is_archived.is_(False),
-                PaymentInstance.status == PaymentStatus.paid,
-                PaymentInstance.payments.any(),
-            ),
-            PaymentInstance.is_deleted.is_(False),
-            # Estimated variable-bill instances stay out of the normal list
-            # until their amount is confirmed (see /payments/needs-confirmation).
-            PaymentInstance.amount_estimated.is_(False),
-            scope,
-        )
+        .filter(*filters)
         .order_by(PaymentInstance.due_date)
         .all()
     )
@@ -501,15 +505,29 @@ def delete_payment(
 
 @router.get("/payments/needs-confirmation", response_model=list[PendingConfirmationOut])
 def needs_confirmation(
+    include_future: bool = Query(False),
     db: Session = Depends(get_db),
     ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     """Variable-bill instances whose amount is still an unconfirmed estimate.
 
-    Only instances whose period has arrived are surfaced; future pre-generated
-    periods are not nagged about.
+    By default only instances whose period has arrived are surfaced so future
+    pre-generated periods are not nagged about; pass `include_future=true` to
+    inspect pre-generated future estimates too.
     """
     current_month = user_today(ws.actor.timezone).strftime("%Y-%m")
+    filters = [
+        BillTemplate.user_id == ws.owner_id,
+        # Archived and deleted bills are quiet: their estimates never nag.
+        BillTemplate.is_deleted.is_(False),
+        BillTemplate.is_archived.is_(False),
+        PaymentInstance.is_deleted.is_(False),
+        PaymentInstance.amount_estimated.is_(True),
+        PaymentInstance.status != PaymentStatus.paid,
+    ]
+    if not include_future:
+        filters.append(PaymentInstance.period <= current_month)
+
     instances = (
         db.query(PaymentInstance)
         .options(
@@ -520,16 +538,7 @@ def needs_confirmation(
             selectinload(PaymentInstance.payments),
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
-        .filter(
-            BillTemplate.user_id == ws.owner_id,
-            # Archived and deleted bills are quiet: their estimates never nag.
-            BillTemplate.is_deleted.is_(False),
-            BillTemplate.is_archived.is_(False),
-            PaymentInstance.is_deleted.is_(False),
-            PaymentInstance.amount_estimated.is_(True),
-            PaymentInstance.status != PaymentStatus.paid,
-            PaymentInstance.period <= current_month,
-        )
+        .filter(*filters)
         .order_by(PaymentInstance.due_date)
         .all()
     )
@@ -720,11 +729,24 @@ def update_bill(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="due_month is not supported for weekly bills; use start_date",
             )
+        if "start_period" in updates and updates["start_period"] is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="start_period is not supported for weekly bills; use start_date",
+            )
     elif "start_date" in updates and updates["start_date"] is not None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="start_date is only supported for weekly bills; use due_month",
+            detail="start_date is only supported for weekly bills; use due_month or start_period",
         )
+
+    explicit_start_period = updates.get("start_period")
+    if explicit_start_period is not None and due_month is not None:
+        if int(explicit_start_period.split("-")[1]) != due_month:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="start_period and due_month specify different months",
+            )
 
     error = validate_schedule(
         effective_frequency, effective_interval, effective_start_date
@@ -811,12 +833,12 @@ def update_bill(
             recalculate_instance(inst, today=user_today(ws.actor.timezone))
 
     # Recalculate start_period when due_month is provided for month-anchored/one_off bills.
-    # Preserve the existing start_period year when the month is unchanged on the same frequency
-    # (e.g. full-form saves editing unrelated fields).
-    if due_month is not None and effective_frequency in (
-        BF.monthly,
-        BF.annual,
-        BF.one_off,
+    # Preserve an explicitly supplied start_period or the existing start_period year when
+    # the month is unchanged on the same frequency (e.g. full-form saves editing other fields).
+    if (
+        due_month is not None
+        and explicit_start_period is None
+        and effective_frequency in (BF.monthly, BF.annual, BF.one_off)
     ):
         existing_month = (
             int(bill.start_period.split("-")[1]) if bill.start_period else None
@@ -909,6 +931,18 @@ def update_bill(
 
     db.commit()
     db.refresh(bill)
+
+    # Converting a one_off template to a recurring schedule should backfill the
+    # current period when the new schedule is active in it.
+    if (
+        old_frequency == BF.one_off
+        and effective_frequency != BF.one_off
+        and not bill.is_paused
+        and not bill.is_archived
+    ):
+        current_period = user_today(ws.actor.timezone).strftime("%Y-%m")
+        backfill_template_instances(db, bill, current_period, current_period)
+
     return bill
 
 
