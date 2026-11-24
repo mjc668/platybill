@@ -137,7 +137,33 @@ def _step_months(template: BillTemplate) -> int:
     return template.interval_count
 
 
-def _occurrence_index(template: BillTemplate, due_date: date) -> int:
+def _resolve_start_period(db: Session, template: BillTemplate) -> str:
+    """Return the recurrence anchor period for a month-anchored template.
+
+    Uses explicit `start_period` when present; otherwise derives the anchor
+    from the most recent non-deleted existing instance so schedules with
+    `interval_count > 1` stay aligned with history; falls back to
+    `created_at` UTC month when no instances exist.
+    """
+    if template.start_period:
+        return template.start_period
+    latest = (
+        db.query(PaymentInstance.period)
+        .filter(
+            PaymentInstance.bill_id == template.id,
+            PaymentInstance.is_deleted.is_(False),
+        )
+        .order_by(PaymentInstance.due_date.desc(), PaymentInstance.id.desc())
+        .first()
+    )
+    if latest is not None:
+        return latest[0]
+    return template.created_at.strftime("%Y-%m")
+
+
+def _occurrence_index(
+    template: BillTemplate, due_date: date, *, anchor: str | None = None
+) -> int:
     """Zero-based index of `due_date` in the template's occurrence sequence.
 
     Weekly bills count steps from `start_date`; month-anchored bills count
@@ -151,21 +177,29 @@ def _occurrence_index(template: BillTemplate, due_date: date) -> int:
             return 0
         return (due_date - template.start_date).days // (7 * template.interval_count)
 
-    # Use start_period (YYYY-MM) as the recurrence anchor when set.
+    # Use explicit/resolved anchor (YYYY-MM) when available.
     # Falls back to created_at UTC month for rows predating the column.
-    anchor = template.start_period or template.created_at.strftime("%Y-%m")
-    anchor_year, anchor_month = map(int, anchor.split("-"))
+    resolved_anchor = (
+        anchor or template.start_period or template.created_at.strftime("%Y-%m")
+    )
+    anchor_year, anchor_month = map(int, resolved_anchor.split("-"))
     months_diff = (due_date.year - anchor_year) * 12 + (due_date.month - anchor_month)
     return months_diff // _step_months(template)
 
 
-def _cap_reached(template: BillTemplate, due_date: date) -> bool:
+def _cap_reached(
+    template: BillTemplate, due_date: date, *, anchor: str | None = None
+) -> bool:
     """True when `due_date` is at or past the template's occurrence cap."""
     cap = template.max_occurrences
-    return cap is not None and _occurrence_index(template, due_date) >= cap
+    return (
+        cap is not None and _occurrence_index(template, due_date, anchor=anchor) >= cap
+    )
 
 
-def _bill_active_in_period(template: BillTemplate, period: str) -> bool:
+def _bill_active_in_period(
+    template: BillTemplate, period: str, *, anchor: str | None = None
+) -> bool:
     """Return True if a month-anchored template's schedule hits the period.
 
     Weekly templates are occurrence-based and always return False here; use
@@ -174,10 +208,12 @@ def _bill_active_in_period(template: BillTemplate, period: str) -> bool:
     if template.frequency not in (BillFrequency.monthly, BillFrequency.annual):
         return False
 
-    # Use start_period (YYYY-MM) as the recurrence anchor when set.
+    # Use explicit/resolved anchor (YYYY-MM) when available.
     # Falls back to created_at UTC month for rows predating the column.
-    anchor = template.start_period or template.created_at.strftime("%Y-%m")
-    start_year, start_month = map(int, anchor.split("-"))
+    resolved_anchor = (
+        anchor or template.start_period or template.created_at.strftime("%Y-%m")
+    )
+    start_year, start_month = map(int, resolved_anchor.split("-"))
     target_year, target_month = map(int, period.split("-"))
     months_diff = (target_year - start_year) * 12 + (target_month - start_month)
 
@@ -211,21 +247,29 @@ def _weekly_occurrences_in_period(template: BillTemplate, period: str) -> list[d
     return occurrences
 
 
-def _raw_occurrences_in_period(template: BillTemplate, period: str) -> list[date]:
+def _raw_occurrences_in_period(
+    template: BillTemplate, period: str, *, anchor: str | None = None
+) -> list[date]:
     """Scheduled due dates in a period, before the occurrence cap is applied."""
     if template.frequency == BillFrequency.weekly:
         return _weekly_occurrences_in_period(template, period)
     if template.frequency == BillFrequency.one_off:
-        anchor = template.start_period or template.created_at.strftime("%Y-%m")
-        return (
-            [_due_date_for_period(period, template.due_day)] if period == anchor else []
+        resolved_anchor = (
+            anchor or template.start_period or template.created_at.strftime("%Y-%m")
         )
-    if _bill_active_in_period(template, period):
+        return (
+            [_due_date_for_period(period, template.due_day)]
+            if period == resolved_anchor
+            else []
+        )
+    if _bill_active_in_period(template, period, anchor=anchor):
         return [_due_date_for_period(period, template.due_day)]
     return []
 
 
-def _occurrences_in_period(template: BillTemplate, period: str) -> list[date]:
+def _occurrences_in_period(
+    template: BillTemplate, period: str, *, anchor: str | None = None
+) -> list[date]:
     """Due dates this template's schedule produces inside a "YYYY-MM" period.
 
     Weekly schedules can yield several occurrences per month; month-anchored
@@ -236,8 +280,8 @@ def _occurrences_in_period(template: BillTemplate, period: str) -> list[date]:
     """
     return [
         due_date
-        for due_date in _raw_occurrences_in_period(template, period)
-        if not _cap_reached(template, due_date)
+        for due_date in _raw_occurrences_in_period(template, period, anchor=anchor)
+        if not _cap_reached(template, due_date, anchor=anchor)
     ]
 
 
@@ -261,6 +305,7 @@ def backfill_template_instances(
     already has a row, including soft-deleted tombstones). The idempotency key
     is (bill_id, due_date).
     """
+    anchor = _resolve_start_period(db, template)
     candidate_due_dates: list[date] = []
     period = from_period
     while period <= to_period:
@@ -269,7 +314,9 @@ def backfill_template_instances(
         ):
             period = _add_months(period, 1)
             continue
-        candidate_due_dates.extend(_occurrences_in_period(template, period))
+        candidate_due_dates.extend(
+            _occurrences_in_period(template, period, anchor=anchor)
+        )
         period = _add_months(period, 1)
 
     if not candidate_due_dates:
@@ -288,6 +335,7 @@ def backfill_template_instances(
     for due_date in candidate_due_dates:
         if due_date in existing_due_dates:
             continue
+        existing_due_dates.add(due_date)
         db.add(
             PaymentInstance(
                 bill_id=template.id,
@@ -299,7 +347,7 @@ def backfill_template_instances(
         )
         created += 1
 
-    if db.new:
+    if created:
         try:
             db.commit()
         except IntegrityError:
@@ -369,7 +417,8 @@ def ensure_current_period_instances(db: Session, period: str, user_id: int) -> N
         .all()
     )
     for template in templates:
-        occurrences = _occurrences_in_period(template, period)
+        anchor = _resolve_start_period(db, template)
+        occurrences = _occurrences_in_period(template, period, anchor=anchor)
         if not occurrences:
             continue
         if template.frequency != BillFrequency.weekly and _period_has_instance(
@@ -418,7 +467,8 @@ def generate_next_instance(
         )
         next_due_date = _due_date_for_period(next_period, template.due_day)
 
-    if _cap_reached(template, next_due_date):
+    anchor = _resolve_start_period(db, template)
+    if _cap_reached(template, next_due_date, anchor=anchor):
         return None
 
     if template.frequency != BillFrequency.weekly:
@@ -491,10 +541,12 @@ def prune_occurrences_beyond_cap(
         )
         .all()
     )
+    anchor = _resolve_start_period(db, template)
     beyond_cap = [
         instance
         for instance in candidates
-        if _occurrence_index(template, instance.due_date) >= template.max_occurrences
+        if _occurrence_index(template, instance.due_date, anchor=anchor)
+        >= template.max_occurrences
     ]
     if not beyond_cap:
         return 0
@@ -516,7 +568,9 @@ def prune_occurrences_beyond_cap(
     return deleted
 
 
-def _first_active_period_on_or_after(template: BillTemplate, today: date) -> str | None:
+def _first_active_period_on_or_after(
+    template: BillTemplate, today: date, *, anchor: str | None = None
+) -> str | None:
     """First month-anchored period on/after today whose due date is not past.
 
     The scan is bounded so an annual bill or a long paused gap cannot loop
@@ -526,7 +580,7 @@ def _first_active_period_on_or_after(template: BillTemplate, today: date) -> str
     period = today.strftime("%Y-%m")
     limit = max(24, _step_months(template) + 1)
     for _ in range(limit):
-        if _bill_active_in_period(template, period) and (
+        if _bill_active_in_period(template, period, anchor=anchor) and (
             _due_date_for_period(period, template.due_day) >= today
         ):
             return period
@@ -534,18 +588,22 @@ def _first_active_period_on_or_after(template: BillTemplate, today: date) -> str
     return None
 
 
-def _next_active_occurrence(template: BillTemplate, today: date) -> date | None:
+def _next_active_occurrence(
+    template: BillTemplate, today: date, *, anchor: str | None = None
+) -> date | None:
     """First occurrence on/after `today` for a template not active this period."""
     if template.frequency == BillFrequency.one_off:
-        anchor = template.start_period or template.created_at.strftime("%Y-%m")
-        return _due_date_for_period(anchor, template.due_day)
+        resolved_anchor = (
+            anchor or template.start_period or template.created_at.strftime("%Y-%m")
+        )
+        return _due_date_for_period(resolved_anchor, template.due_day)
     if template.frequency == BillFrequency.weekly:
         if template.start_date is None:
             return None
         return _first_occurrence_on_or_after(
             template.start_date, template.interval_count, today
         )
-    period = _first_active_period_on_or_after(template, today)
+    period = _first_active_period_on_or_after(template, today, anchor=anchor)
     return _due_date_for_period(period, template.due_day) if period else None
 
 
@@ -589,13 +647,14 @@ def cancel_archived_occurrences(
     if start >= today:
         return 0
 
+    anchor = _resolve_start_period(db, template)
     candidate_due_dates: list[date] = []
     period = start.strftime("%Y-%m")
     end_period = today.strftime("%Y-%m")
     while period <= end_period:
         candidate_due_dates.extend(
             due_date
-            for due_date in _occurrences_in_period(template, period)
+            for due_date in _occurrences_in_period(template, period, anchor=anchor)
             if start <= due_date < today
         )
         period = _add_months(period, 1)
@@ -655,17 +714,26 @@ def seed_resumed_occurrences(
     respected with schedule re-anchoring. New rows are appended to the session
     without committing — the caller owns the commit.
     """
+    anchor = _resolve_start_period(db, template)
     current = today.strftime("%Y-%m")
-    raw = [d for d in _raw_occurrences_in_period(template, current) if d >= today]
-    candidates = [d for d in _occurrences_in_period(template, current) if d >= today]
+    raw = [
+        d
+        for d in _raw_occurrences_in_period(template, current, anchor=anchor)
+        if d >= today
+    ]
+    candidates = [
+        d
+        for d in _occurrences_in_period(template, current, anchor=anchor)
+        if d >= today
+    ]
 
     if raw and not candidates and template.max_occurrences is not None:
         candidates = _reanchor_for_cap(db, template, raw, current)
     elif not raw:
-        candidate = _next_active_occurrence(template, today)
+        candidate = _next_active_occurrence(template, today, anchor=anchor)
         if candidate is None or candidate < today:
             candidates = []
-        elif _cap_reached(template, candidate):
+        elif _cap_reached(template, candidate, anchor=anchor):
             candidates = _reanchor_for_cap(
                 db, template, [candidate], candidate.strftime("%Y-%m")
             )
