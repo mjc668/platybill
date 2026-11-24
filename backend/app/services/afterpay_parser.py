@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from html.parser import HTMLParser
 import html
 import logging
@@ -302,3 +302,553 @@ def _parse_from_text(text: str) -> ExtractedBnpl | None:
         installments=installments,
         type="afterpay",
     )
+
+
+# ---------------------------------------------------------------------------
+# Screenshot / BNPL instalment list parsing (Afterpay "Your orders" view)
+# ---------------------------------------------------------------------------
+
+_MONTH_NAMES: dict[str, int] = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+_WEEKDAY_PREFIX = r"(?:\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?"
+_DMY_MONTH_YEAR_RE = re.compile(
+    _WEEKDAY_PREFIX + r"\b(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_MDY_MONTH_YEAR_RE = re.compile(
+    _WEEKDAY_PREFIX + r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_DM_NO_YEAR_RE = re.compile(
+    _WEEKDAY_PREFIX + r"\b(\d{1,2})\s+([A-Za-z]{3,9})\b",
+    re.IGNORECASE,
+)
+_MD_NO_YEAR_RE = re.compile(
+    _WEEKDAY_PREFIX + r"\b([A-Za-z]{3,9})\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+
+_COUNTER_RE = re.compile(r"\b(\d{1,2})\s*(?:of|/)\s*(\d{1,2})\b", re.IGNORECASE)
+_ANCHOR_LINE_RE = re.compile(
+    r"^\s*(\d{1,2})\s+of\s+(\d{1,2})\s*(?:[•·\-|•]|\s)\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_INLINE_AMOUNT_RE = re.compile(
+    r"(?:\bPay\s+)?\$\s*(\d{1,3}(?:,\d{3})*\.\d{2})\b",
+    re.IGNORECASE,
+)
+_STANDALONE_AMOUNT_RE = re.compile(
+    r"^\s*(?:Pay\s+)?\$\s*(\d{1,3}(?:,\d{3})*\.\d{2})\s*$",
+    re.IGNORECASE,
+)
+_CLOCK_RE = re.compile(r"^\d{1,2}:\d{2}(?:\s*[AP]M)?$", re.IGNORECASE)
+_DUE_IN_DAYS_RE = re.compile(r"^due\s+in\s+\d+\s+days?$", re.IGNORECASE)
+_NOISE_PHRASES: frozenset[str] = frozenset(
+    {
+        "your orders",
+        "total you owe",
+        "upcoming payments",
+        "active orders",
+        "history",
+        "make multiple payments",
+        "logo",
+        "multiple orders",
+    }
+)
+
+
+@dataclass(frozen=True)
+class BnplInstallmentRow:
+    """One instalment extracted from an Afterpay / BNPL list screenshot."""
+
+    merchant: str
+    amount: Decimal
+    due_date: date
+    installment_number: int
+    total_installments: int
+    currency: str = "AUD"
+
+    @property
+    def installment_label(self) -> str:
+        return f"{self.installment_number} of {self.total_installments}"
+
+    @property
+    def remaining_installments(self) -> int:
+        return max(0, self.total_installments - self.installment_number)
+
+    def to_meta(self) -> dict[str, Any]:
+        return {
+            "type": "afterpay",
+            "source_kind": "bnpl_list",
+            "merchant": self.merchant,
+            "installment_number": self.installment_number,
+            "total_installments": self.total_installments,
+            "installment_label": self.installment_label,
+            "remaining_installments": self.remaining_installments,
+            "interval_count": 2,
+            "max_occurrences": self.total_installments,
+        }
+
+
+def _clean_merchant(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    text = re.sub(r"^afterpay\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    return text
+
+
+def _is_noise_merchant(value: str) -> bool:
+    low = value.strip().lower()
+    if not low or low in _NOISE_PHRASES:
+        return True
+    if _DUE_IN_DAYS_RE.match(low) or _CLOCK_RE.match(low):
+        return True
+    return False
+
+
+def _parse_bnpl_amount(value: Any) -> Decimal | None:
+    """Parse an AUD instalment amount from numeric or string form (e.g. 'Pay $28.50')."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            dec = Decimal(str(value))
+        except InvalidOperation:
+            return None
+    elif isinstance(value, str):
+        match = _INLINE_AMOUNT_RE.search(value)
+        raw = match.group(1) if match else re.sub(r"[^\d.,]", "", value)
+        raw = raw.replace(",", "")
+        if not raw:
+            return None
+        try:
+            dec = Decimal(raw)
+        except InvalidOperation:
+            return None
+    else:
+        return None
+
+    if dec <= 0:
+        return None
+    return dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _parse_installment_counter(
+    label: Any = None,
+    number: Any = None,
+    total: Any = None,
+    fallback_text: str | None = None,
+) -> tuple[int, int] | None:
+    """Extract and validate an (n, m) instalment counter where 1 <= n <= m, m >= 2."""
+    if (
+        number is not None
+        and total is not None
+        and not isinstance(number, bool)
+        and not isinstance(total, bool)
+    ):
+        try:
+            n = int(number)
+            m = int(total)
+            if 1 <= n <= m and m >= 2:
+                return (n, m)
+        except (ValueError, TypeError):
+            pass
+
+    for candidate in (label, fallback_text):
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        match = _COUNTER_RE.search(candidate)
+        if match:
+            n, m = int(match.group(1)), int(match.group(2))
+            if 1 <= n <= m and m >= 2:
+                return (n, m)
+    return None
+
+
+def _extract_explicit_year_month(text: str) -> tuple[int, int] | None:
+    """Return (year, month) when `text` contains an explicit 4-digit year."""
+    iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+    if iso:
+        y, m = int(iso.group(1)), int(iso.group(2))
+        if 1 <= m <= 12:
+            return (y, m)
+    dmy = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
+    if dmy:
+        m, y = int(dmy.group(2)), int(dmy.group(3))
+        if 1 <= m <= 12:
+            return (y, m)
+    for regex, month_group, year_group in (
+        (_DMY_MONTH_YEAR_RE, 2, 3),
+        (_MDY_MONTH_YEAR_RE, 1, 3),
+    ):
+        match = regex.search(text)
+        if match:
+            month = _MONTH_NAMES.get(match.group(month_group).lower())
+            if month is not None:
+                return (int(match.group(year_group)), month)
+    return None
+
+
+def _resolve_yearless_date(
+    month: int,
+    day: int,
+    *,
+    reference_date: date | None = None,
+    explicit_year_hint: tuple[int, int] | None = None,
+) -> date | None:
+    if explicit_year_hint is not None:
+        hint_year, hint_month = explicit_year_hint
+        if hint_month <= 3 and month >= 10:
+            year = hint_year - 1
+        elif hint_month >= 10 and month <= 3:
+            year = hint_year + 1
+        else:
+            year = hint_year
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    ref = reference_date or date.today()
+    candidate: date | None = None
+    for y in (ref.year, ref.year + 1, ref.year - 1):
+        try:
+            candidate = date(y, month, day)
+            break
+        except ValueError:
+            continue
+    if candidate is None:
+        return None
+
+    if candidate < ref - timedelta(days=60):
+        try:
+            return date(candidate.year + 1, month, day)
+        except ValueError:
+            return candidate
+    if candidate > ref + timedelta(days=300):
+        try:
+            return date(candidate.year - 1, month, day)
+        except ValueError:
+            return candidate
+    return candidate
+
+
+def parse_bnpl_date(
+    text: str,
+    *,
+    reference_date: date | None = None,
+    explicit_year_hint: tuple[int, int] | None = None,
+) -> date | None:
+    """Parse Afterpay screenshot date strings such as 'Sun, 27 Dec' or '3 Jan, 2027'."""
+    if not text or not text.strip():
+        return None
+
+    # Strip any leading "n of m •" counter prefix if embedded.
+    cleaned = re.sub(
+        r"^\s*\d{1,2}\s*(?:of|/)\s*\d{1,2}\s*[•·\-|]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # 1. Explicit numeric dates (YYYY-MM-DD, DD/MM/YYYY)
+    numeric = _parse_date(cleaned)
+    if numeric is not None:
+        return numeric
+
+    # 2. Explicit month-name dates with year ('3 Jan, 2027', 'Jan 3, 2027')
+    m_dmy = _DMY_MONTH_YEAR_RE.search(cleaned)
+    if m_dmy:
+        day = int(m_dmy.group(1))
+        month = _MONTH_NAMES.get(m_dmy.group(2).lower())
+        year = int(m_dmy.group(3))
+        if month is not None:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
+
+    m_mdy = _MDY_MONTH_YEAR_RE.search(cleaned)
+    if m_mdy:
+        month = _MONTH_NAMES.get(m_mdy.group(1).lower())
+        day = int(m_mdy.group(2))
+        year = int(m_mdy.group(3))
+        if month is not None:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
+
+    # 3. Yearless month-name dates ('Sun, 27 Dec', '27 Dec', 'Sun, Dec 27')
+    m_dm = _DM_NO_YEAR_RE.search(cleaned)
+    if m_dm:
+        day = int(m_dm.group(1))
+        month = _MONTH_NAMES.get(m_dm.group(2).lower())
+        if month is not None:
+            return _resolve_yearless_date(
+                month,
+                day,
+                reference_date=reference_date,
+                explicit_year_hint=explicit_year_hint,
+            )
+
+    m_md = _MD_NO_YEAR_RE.search(cleaned)
+    if m_md:
+        month = _MONTH_NAMES.get(m_md.group(1).lower())
+        day = int(m_md.group(2))
+        if month is not None:
+            return _resolve_yearless_date(
+                month,
+                day,
+                reference_date=reference_date,
+                explicit_year_hint=explicit_year_hint,
+            )
+
+    return None
+
+
+def parse_afterpay_installments_payload(
+    payload: dict[str, Any], *, reference_date: date | None = None
+) -> list[BnplInstallmentRow]:
+    """Validate and normalize a vision-LLM JSON payload containing BNPL instalments.
+
+    Returns an empty list when the payload does not represent a BNPL instalment
+    list (e.g. an ordinary single bill or rows without an 'n of m' counter).
+    """
+    raw_items = payload.get("installments")
+    if not isinstance(raw_items, list) or not raw_items:
+        return []
+
+    explicit_hint: tuple[int, int] | None = None
+    for item in raw_items:
+        if isinstance(item, dict):
+            hint = _extract_explicit_year_month(str(item.get("due_date") or ""))
+            if hint is not None:
+                explicit_hint = hint
+                break
+
+    rows: list[BnplInstallmentRow] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        merchant = _clean_merchant(str(item.get("merchant") or ""))
+        if _is_noise_merchant(merchant):
+            continue
+        amount = _parse_bnpl_amount(item.get("amount"))
+        if amount is None:
+            continue
+        raw_due = str(item.get("due_date") or "")
+        counter = _parse_installment_counter(
+            label=item.get("installment_label") or item.get("counter"),
+            number=item.get("installment_number"),
+            total=item.get("total_installments"),
+            fallback_text=raw_due,
+        )
+        if counter is None:
+            continue
+        due = parse_bnpl_date(
+            raw_due,
+            reference_date=reference_date,
+            explicit_year_hint=explicit_hint,
+        )
+        if due is None:
+            continue
+        rows.append(
+            BnplInstallmentRow(
+                merchant=merchant,
+                amount=amount,
+                due_date=due,
+                installment_number=counter[0],
+                total_installments=counter[1],
+                currency="AUD",
+            )
+        )
+    return rows
+
+
+def _is_avatar_or_noise_line(line: str, next_line: str | None = None) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    low = stripped.lower()
+    if low in _NOISE_PHRASES or _DUE_IN_DAYS_RE.match(low) or _CLOCK_RE.match(low):
+        return True
+    # Single-letter avatar initials (M, A, U, C) or numeric battery badge.
+    if len(stripped) == 1 or stripped.isdigit():
+        return True
+    # Brand logo text duplicated right above the actual merchant name (e.g.
+    # "ebay" above "eBay", "BING LEE" above "Bing Lee Electrics ...").
+    if next_line is not None:
+        next_clean = _INLINE_AMOUNT_RE.sub("", next_line).strip().lower()
+        if next_clean and next_clean != low and next_clean.startswith(low):
+            return True
+        if next_clean == low and stripped.islower():
+            return True
+    return False
+
+
+def parse_afterpay_orders_text(
+    text: str, *, reference_date: date | None = None
+) -> list[BnplInstallmentRow]:
+    """Parse OCR text of an Afterpay 'Your orders' instalment list screenshot."""
+    raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not raw_lines:
+        return []
+
+    # Locate every "n of m • <date>" anchor line first.
+    anchors: list[tuple[int, int, int, str]] = []
+    explicit_hint: tuple[int, int] | None = None
+    for idx, line in enumerate(raw_lines):
+        match = _ANCHOR_LINE_RE.match(line)
+        if not match:
+            continue
+        n, m = int(match.group(1)), int(match.group(2))
+        if not (1 <= n <= m and m >= 2):
+            continue
+        date_part = match.group(3).strip()
+        hint = _extract_explicit_year_month(date_part)
+        if hint is not None and explicit_hint is None:
+            explicit_hint = hint
+        anchors.append((idx, n, m, date_part))
+
+    if not anchors:
+        return []
+
+    # Identify standalone amount lines that belong to the summary header
+    # ("$1,341.03" right before "Total you owe", "$643.20" before "Due in 15 days").
+    summary_indices: set[int] = set()
+    for idx, line in enumerate(raw_lines):
+        if _STANDALONE_AMOUNT_RE.match(line) and idx + 1 < len(raw_lines):
+            nxt = raw_lines[idx + 1].lower()
+            if nxt == "total you owe" or _DUE_IN_DAYS_RE.match(nxt):
+                summary_indices.add(idx)
+
+    rows: list[BnplInstallmentRow] = []
+    consumed_after: set[int] = set()
+    for pos, (anchor_idx, n, m, date_part) in enumerate(anchors):
+        due = parse_bnpl_date(
+            date_part,
+            reference_date=reference_date,
+            explicit_year_hint=explicit_hint,
+        )
+        if due is None:
+            continue
+
+        prev_anchor_idx = anchors[pos - 1][0] if pos > 0 else -1
+        next_anchor_idx = (
+            anchors[pos + 1][0] if pos + 1 < len(anchors) else len(raw_lines)
+        )
+
+        # Collect candidate lines between the previous anchor and this anchor.
+        merchant: str | None = None
+        amount: Decimal | None = None
+        window_start = prev_anchor_idx + 1
+        candidate_lines: list[tuple[int, str]] = [
+            (i, raw_lines[i])
+            for i in range(window_start, anchor_idx)
+            if i not in consumed_after and i not in summary_indices
+        ]
+
+        # Walk backwards from the anchor to find the merchant line (and inline/adjacent amount).
+        for offset in range(len(candidate_lines) - 1, -1, -1):
+            line_idx, line = candidate_lines[offset]
+            if _STANDALONE_AMOUNT_RE.match(line):
+                if amount is None:
+                    amount = _parse_bnpl_amount(line)
+                continue
+            next_candidate = (
+                candidate_lines[offset + 1][1]
+                if offset + 1 < len(candidate_lines)
+                else None
+            )
+            if _is_avatar_or_noise_line(line, next_candidate):
+                continue
+            inline = _INLINE_AMOUNT_RE.search(line)
+            if inline:
+                if amount is None:
+                    amount = _parse_bnpl_amount(inline.group(1))
+                cleaned_m = _clean_merchant(_INLINE_AMOUNT_RE.sub("", line).strip())
+            else:
+                cleaned_m = _clean_merchant(line)
+            if cleaned_m and not _is_noise_merchant(cleaned_m):
+                merchant = cleaned_m
+                break
+
+        # If amount sits on the line immediately after the anchor (e.g. "Pay $28.50" button).
+        if amount is None and anchor_idx + 1 < next_anchor_idx:
+            after_idx = anchor_idx + 1
+            if after_idx not in summary_indices and _STANDALONE_AMOUNT_RE.match(
+                raw_lines[after_idx]
+            ):
+                amount = _parse_bnpl_amount(raw_lines[after_idx])
+                consumed_after.add(after_idx)
+
+        if merchant is None or amount is None:
+            # Clipped/incomplete row at top or bottom edge — skip.
+            continue
+
+        rows.append(
+            BnplInstallmentRow(
+                merchant=merchant,
+                amount=amount,
+                due_date=due,
+                installment_number=n,
+                total_installments=m,
+                currency="AUD",
+            )
+        )
+
+    return rows
+
+
+def _normalize_merchant_for_compare(value: str) -> tuple[str, bool]:
+    """Return (normalized_text, was_truncated_with_ellipsis)."""
+    stripped = _clean_merchant(value)
+    truncated = stripped.endswith("...") or stripped.endswith("…")
+    stripped = stripped.rstrip(".… ").lower()
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    return stripped, truncated
+
+
+def merchants_match(a: str, b: str) -> bool:
+    """Compare two Afterpay merchant names, tolerating ellipsis truncation.
+
+    Handles width changes between 'Pay $XX.XX' and '$XX.XX' rows (e.g.
+    'Bing Lee Electri...' vs 'Bing Lee Electrics ...' vs 'Bing Lee Electrics Pty Limited')
+    without merging distinct stores such as 'AMCALPHARMA...' vs 'AMCAL MARAL...'.
+    """
+    norm_a, trunc_a = _normalize_merchant_for_compare(a)
+    norm_b, trunc_b = _normalize_merchant_for_compare(b)
+    if not norm_a or not norm_b:
+        return False
+    if norm_a == norm_b:
+        return True
+    if trunc_a and len(norm_a) >= 4 and norm_b.startswith(norm_a):
+        return True
+    if trunc_b and len(norm_b) >= 4 and norm_a.startswith(norm_b):
+        return True
+    return False

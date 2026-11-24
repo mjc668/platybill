@@ -293,6 +293,10 @@ function ImportRow({
   const [amount, setAmount] = useState(draft.amount ?? "");
   const [dueDate, setDueDate] = useState(draft.due_date ?? "");
   const isAfterpay = draft.meta?.type === "afterpay";
+  const afterpayInstallmentLabel =
+    typeof draft.meta?.installment_label === "string"
+      ? draft.meta.installment_label
+      : null;
   const afterpayInterval =
     typeof draft.meta?.interval_count === "number" ? draft.meta.interval_count : 2;
   const afterpayOccurrences =
@@ -389,10 +393,12 @@ function ImportRow({
           </div>
           {isAfterpay ? (
             <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-              {t("afterpayInstallments", {
-                count: afterpayOccurrences,
-                interval: afterpayInterval === 1 ? t("weekly") : t("fortnightly"),
-              })}
+              {afterpayInstallmentLabel
+                ? t("afterpayInstallmentProgress", { label: afterpayInstallmentLabel })
+                : t("afterpayInstallments", {
+                    count: afterpayOccurrences,
+                    interval: afterpayInterval === 1 ? t("weekly") : t("fortnightly"),
+                  })}
             </p>
           ) : (
             draft.period && (

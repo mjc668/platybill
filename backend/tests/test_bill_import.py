@@ -1060,46 +1060,6 @@ def test_match_bill_disambiguates_same_issuer_by_due_day(client_db):
     )
 
     extracted = ExtractedBill(
-# Email import robustness: MIME fallback, inline images, HTML body, re-import,
-# and visible failures
-# ---------------------------------------------------------------------------
-
-
-def test_email_accepts_pdf_sent_as_octet_stream_and_x_pdf(client_db):
-    """PDFs sent as application/octet-stream or application/x-pdf are accepted."""
-    from app.services.bill_extract import ExtractedBill
-
-    client, db = client_db
-    register_and_login(client, "imp_mime@test.com")
-    user = db.query(User).filter(User.email == "imp_mime@test.com").one()
-
-    pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
-
-    msg_octet = EmailMessage()
-    msg_octet["From"] = "enotice@council.example"
-    msg_octet["Message-ID"] = "<council-octet@example>"
-    msg_octet["Subject"] = "Water Notice"
-    msg_octet.set_content("See attached notice.")
-    msg_octet.add_attachment(
-        pdf_bytes,
-        maintype="application",
-        subtype="octet-stream",
-        filename="water-notice.pdf",
-    )
-
-    msg_xpdf = EmailMessage()
-    msg_xpdf["From"] = "enotice@council.example"
-    msg_xpdf["Message-ID"] = "<council-xpdf@example>"
-    msg_xpdf["Subject"] = "Rates Notice"
-    msg_xpdf.set_content("See attached notice.")
-    msg_xpdf.add_attachment(
-        pdf_bytes,
-        maintype="application",
-        subtype="x-pdf",
-        filename="notice-download",
-    )
-
-    fake_extracted = ExtractedBill(
         provider="Goulburn Mulwaree Council",
         amount=Decimal("574.13"),
         currency="AUD",
@@ -1283,6 +1243,54 @@ def test_upload_same_issuer_water_notice_lands_on_water_not_rates(client_db):
     assert draft["status"] == "pending"
     assert draft["matched_bill_id"] == water["id"]
     assert draft["matched_bill_name"] == "Goulburn Mulwaree Council Water"
+
+
+# ---------------------------------------------------------------------------
+# Email import robustness: MIME fallback, inline images, HTML body, re-import,
+# and visible failures
+# ---------------------------------------------------------------------------
+
+
+def test_email_accepts_pdf_sent_as_octet_stream_and_x_pdf(client_db):
+    """PDFs sent as application/octet-stream or application/x-pdf are accepted."""
+    from app.services.bill_extract import ExtractedBill
+
+    client, db = client_db
+    register_and_login(client, "imp_mime@test.com")
+    user = db.query(User).filter(User.email == "imp_mime@test.com").one()
+
+    pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
+
+    msg_octet = EmailMessage()
+    msg_octet["From"] = "enotice@council.example"
+    msg_octet["Message-ID"] = "<council-octet@example>"
+    msg_octet["Subject"] = "Water Notice"
+    msg_octet.set_content("See attached notice.")
+    msg_octet.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="octet-stream",
+        filename="water-notice.pdf",
+    )
+
+    msg_xpdf = EmailMessage()
+    msg_xpdf["From"] = "enotice@council.example"
+    msg_xpdf["Message-ID"] = "<council-xpdf@example>"
+    msg_xpdf["Subject"] = "Rates Notice"
+    msg_xpdf.set_content("See attached notice.")
+    msg_xpdf.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="x-pdf",
+        filename="notice-download",
+    )
+
+    fake_extracted = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 11),
+        period="2026-12",
         confidence=0.9,
         raw_text="Water Notice",
     )

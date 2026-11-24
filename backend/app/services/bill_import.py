@@ -12,6 +12,7 @@ import hashlib
 import imaplib
 import logging
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from email.header import decode_header, make_header
 from email.message import Message
@@ -20,6 +21,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -28,11 +30,17 @@ from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, Paymen
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
 from app.services import app_settings
-from app.services.afterpay_parser import is_afterpay_email, parse_afterpay
+from app.services.afterpay_parser import (
+    BnplInstallmentRow,
+    is_afterpay_email,
+    merchants_match,
+    parse_afterpay,
+)
 from app.services.bill_extract import (
     ExtractedBill,
     extract_bnpl_from_text,
     extract_document,
+    extract_document_items,
     extract_from_text,
 )
 from app.services.llm import LlmUnavailable
@@ -257,6 +265,44 @@ def resolve_import_user(db: Session) -> User | None:
     return users[0] if len(users) == 1 else None
 
 
+def _afterpay_merchant_tokens(value: str) -> tuple[list[str], bool]:
+    stripped = value.strip()
+    if stripped.lower().startswith("afterpay:"):
+        stripped = stripped[len("afterpay:") :].strip()
+    truncated = stripped.endswith("...") or stripped.endswith("…")
+    cleaned = stripped.rstrip(".… ")
+    raw_tokens = "".join(c.lower() if c.isalnum() else " " for c in cleaned).split()
+    tokens: list[str] = []
+    for idx, tok in enumerate(raw_tokens):
+        is_last_truncated = truncated and idx == len(raw_tokens) - 1
+        if len(tok) > 2 or (is_last_truncated and len(tok) >= 2):
+            tokens.append(tok)
+    return tokens, truncated
+
+
+def _score_afterpay_match(provider: str, bill_name: str) -> float:
+    if "afterpay" not in bill_name.lower():
+        return 0.0
+    if merchants_match(provider, bill_name):
+        return 1.0
+    p_tokens, p_truncated = _afterpay_merchant_tokens(provider)
+    b_tokens, _ = _afterpay_merchant_tokens(bill_name)
+    if not p_tokens or not b_tokens:
+        return 0.0
+    b_set = set(b_tokens)
+    matched = 0
+    for idx, tok in enumerate(p_tokens):
+        if tok in b_set:
+            matched += 1
+        elif (
+            p_truncated
+            and idx == len(p_tokens) - 1
+            and any(bt.startswith(tok) for bt in b_tokens)
+        ):
+            matched += 1
+    return matched / len(p_tokens) if matched else 0.0
+
+
 def match_bill(
     db: Session,
     user_id: int,
@@ -266,16 +312,14 @@ def match_bill(
 ) -> int | None:
     """Match an extracted document to an active bill template.
 
-    Issuer token overlap (against template name and notes) is the first pass.
-    Any candidate whose service keyword explicitly contradicts the document is
-    disqualified. When multiple templates tie on issuer overlap, disambiguate
-    by service keywords and due day; if still ambiguous, return None so the
-    draft stays pending for manual selection.
+    Afterpay drafts ("Afterpay: <merchant>") use dedicated merchant matching
+    against active Afterpay templates first. For all other bills, issuer token
+    overlap (against template name and notes) is the first pass; candidates
+    whose service keyword explicitly contradicts the document are disqualified;
+    tied templates are disambiguated by service keywords and due day; and
+    remaining ambiguity returns None so the draft stays pending.
     """
     if not extracted.provider:
-        return None
-    provider_tokens = _tokens(extracted.provider)
-    if not provider_tokens:
         return None
     bills = (
         db.query(BillTemplate)
@@ -286,6 +330,18 @@ def match_bill(
         )
         .all()
     )
+    if extracted.provider.strip().lower().startswith("afterpay:"):
+        best_id: int | None = None
+        best_score = 0.0
+        for bill in bills:
+            score = _score_afterpay_match(extracted.provider, bill.name)
+            if score > best_score:
+                best_id, best_score = bill.id, score
+        return best_id if best_score >= MATCH_THRESHOLD else None
+
+    provider_tokens = _tokens(extracted.provider)
+    if not provider_tokens:
+        return None
 
     doc_text = " ".join(
         part for part in (extracted.provider, extracted.raw_text, filename) if part
@@ -329,6 +385,65 @@ def match_bill(
     return winners[0].id if len(winners) == 1 else None
 
 
+def _is_duplicate_bnpl_instalment(
+    db: Session,
+    user_id: int,
+    row: BnplInstallmentRow,
+    matched_bill_id: int | None,
+) -> bool:
+    """True when (merchant, amount, due_date) already exists as a draft or payment instance."""
+    provider_name = f"Afterpay: {row.merchant}"
+
+    # 1. Existing pending/confirmed drafts with the same due_date and amount.
+    existing_drafts = (
+        db.query(ImportDraft)
+        .filter(
+            ImportDraft.user_id == user_id,
+            ImportDraft.due_date == row.due_date,
+            ImportDraft.amount == row.amount,
+            ImportDraft.status.in_([ImportStatus.pending, ImportStatus.confirmed]),
+        )
+        .all()
+    )
+    for draft in existing_drafts:
+        if matched_bill_id is not None and draft.matched_bill_id == matched_bill_id:
+            return True
+        if draft.provider and merchants_match(provider_name, draft.provider):
+            return True
+
+    # 2. Existing non-deleted payment instances with the same due_date and amount.
+    existing_instances = (
+        db.query(PaymentInstance, BillTemplate)
+        .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .filter(
+            BillTemplate.user_id == user_id,
+            BillTemplate.is_deleted.is_(False),
+            PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.due_date == row.due_date,
+            PaymentInstance.amount == row.amount,
+        )
+        .all()
+    )
+    for inst, bill in existing_instances:
+        if matched_bill_id is not None and inst.bill_id == matched_bill_id:
+            return True
+        if "afterpay" in bill.name.lower() and merchants_match(
+            provider_name, bill.name
+        ):
+            return True
+
+    return False
+
+
+@dataclass
+class ImportDocumentResult:
+    """Result of importing one uploaded or folder-polled document."""
+
+    drafts: list[ImportDraft]
+    skipped_duplicates: int = 0
+    already_imported_file: bool = False
+
+
 def create_draft(
     db: Session,
     *,
@@ -367,6 +482,105 @@ def _max_bytes() -> int:
     return settings.import_max_file_mb * 1024 * 1024
 
 
+def import_document_drafts(
+    db: Session,
+    *,
+    user_id: int,
+    data: bytes,
+    filename: str | None,
+    content_type: str | None,
+    source: ImportSource,
+) -> ImportDocumentResult:
+    """Extract a document and store one (single bill) or N (BNPL list) pending drafts."""
+    if len(data) > _max_bytes():
+        raise ValueError(
+            f"File exceeds IMPORT_MAX_FILE_MB ({settings.import_max_file_mb})"
+        )
+    file_hash = _hash(data)
+    base_ref = f"{source.value}:{file_hash}"
+    bnpl_prefix = f"{base_ref}:afterpay:"
+
+    # Reject exact file re-uploads across all draft statuses before calling the LLM.
+    if (
+        db.query(ImportDraft)
+        .filter(
+            or_(
+                ImportDraft.source_ref == base_ref,
+                ImportDraft.source_ref.like(f"{bnpl_prefix}%"),
+            )
+        )
+        .first()
+        is not None
+    ):
+        return ImportDocumentResult(
+            drafts=[], skipped_duplicates=1, already_imported_file=True
+        )
+
+    config = app_settings.llm_config(db)
+    if config is None:
+        raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
+
+    user = db.get(User, user_id)
+    ref_date = user_today(user.timezone if user else None)
+    doc = extract_document_items(
+        data,
+        config=config,
+        content_type=content_type,
+        filename=filename,
+        reference_date=ref_date,
+    )
+
+    if doc.bnpl_installments:
+        created: list[ImportDraft] = []
+        skipped = 0
+        for row_index, row in enumerate(doc.bnpl_installments):
+            extracted = ExtractedBill(
+                provider=f"Afterpay: {row.merchant}",
+                amount=row.amount,
+                currency=row.currency,
+                due_date=row.due_date,
+                period=row.due_date.strftime("%Y-%m"),
+                confidence=1.0,
+                raw_text=doc.raw_text,
+            )
+            matched_bill_id = match_bill(db, user_id, extracted)
+            if _is_duplicate_bnpl_instalment(db, user_id, row, matched_bill_id):
+                skipped += 1
+                continue
+            row_ref = f"{bnpl_prefix}{row_index}"
+            draft = create_draft(
+                db,
+                user_id=user_id,
+                source=source,
+                source_ref=row_ref,
+                filename=filename,
+                extracted=extracted,
+                meta=row.to_meta(),
+            )
+            if draft is None:
+                skipped += 1
+            else:
+                created.append(draft)
+        return ImportDocumentResult(drafts=created, skipped_duplicates=skipped)
+
+    if doc.bill is None:
+        return ImportDocumentResult(drafts=[], skipped_duplicates=0)
+
+    draft = create_draft(
+        db,
+        user_id=user_id,
+        source=source,
+        source_ref=base_ref,
+        filename=filename,
+        extracted=doc.bill,
+    )
+    if draft is None:
+        return ImportDocumentResult(
+            drafts=[], skipped_duplicates=1, already_imported_file=True
+        )
+    return ImportDocumentResult(drafts=[draft], skipped_duplicates=0)
+
+
 def import_document(
     db: Session,
     *,
@@ -377,27 +591,15 @@ def import_document(
     source: ImportSource,
 ) -> ImportDraft | None:
     """Extract a document and store it as a draft; None when it is a duplicate."""
-    if len(data) > _max_bytes():
-        raise ValueError(
-            f"File exceeds IMPORT_MAX_FILE_MB ({settings.import_max_file_mb})"
-        )
-    source_ref = f"{source.value}:{_hash(data)}"
-    if _has_active_draft(db, source_ref):
-        return None
-    config = app_settings.llm_config(db)
-    if config is None:
-        raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
-    extracted = extract_document(
-        data, config=config, content_type=content_type, filename=filename
-    )
-    return create_draft(
+    result = import_document_drafts(
         db,
         user_id=user_id,
-        source=source,
-        source_ref=source_ref,
+        data=data,
         filename=filename,
-        extracted=extracted,
+        content_type=content_type,
+        source=source,
     )
+    return result.drafts[0] if result.drafts else None
 
 
 def import_text(
@@ -623,7 +825,7 @@ def poll_directory(db: Session) -> dict[str, Any]:
                     f"File exceeds IMPORT_MAX_FILE_MB ({settings.import_max_file_mb})"
                 )
             data = path.read_bytes()
-            draft = import_document(
+            result = import_document_drafts(
                 db,
                 user_id=user.id,
                 data=data,
@@ -636,10 +838,11 @@ def poll_directory(db: Session) -> dict[str, Any]:
             _fail_file(path, exc)
             failed += 1
             continue
-        if draft is None:
+        if not result.drafts:
             duplicates += 1
         else:
-            processed += 1
+            processed += len(result.drafts)
+            duplicates += result.skipped_duplicates
         _archive(path, settings.import_keep_files)
     return {"processed": processed, "duplicates": duplicates, "failed": failed}
 

@@ -166,7 +166,12 @@ export function discardImportDraft(id: number): Promise<void> {
   return apiFetch<void>(`/import/drafts/${id}/discard`, { method: "POST" });
 }
 
-export async function uploadBill(file: File): Promise<ImportDraftOut> {
+export interface ImportUploadOut extends ImportDraftOut {
+  drafts: ImportDraftOut[];
+  skipped_duplicates?: number;
+}
+
+export async function uploadBill(file: File): Promise<ImportUploadOut> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${getApiBaseUrl()}${getApiPrefix()}/import/upload`, {
