@@ -17,6 +17,7 @@ from app.schemas.imports import (
     ImportDraftUpdate,
     ImportSettingsIn,
     ImportStatusOut,
+    ImportUploadOut,
     ScanNowOut,
     TestImapOut,
     TestOllamaOut,
@@ -27,7 +28,7 @@ from app.services.bill_import import (
     ALLOWED_SUFFIXES,
     confirm_draft,
     discard_draft,
-    import_document,
+    import_document_drafts,
     poll_directory,
     poll_email,
 )
@@ -64,7 +65,7 @@ def _mask_email(value: str | None) -> str | None:
 
 @router.post(
     "/upload",
-    response_model=ImportDraftOut,
+    response_model=ImportUploadOut,
     status_code=status.HTTP_201_CREATED,
 )
 def upload_bill(
@@ -95,7 +96,7 @@ def upload_bill(
         raise HTTPException(status_code=422, detail="Empty file")
 
     try:
-        draft = import_document(
+        result = import_document_drafts(
             db,
             user_id=me.id,
             data=data,
@@ -110,9 +111,20 @@ def upload_bill(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if draft is None:
-        raise HTTPException(status_code=409, detail="This file was already imported")
-    return _draft_out(draft)
+    if not result.drafts:
+        detail = (
+            "This file was already imported"
+            if result.already_imported_file
+            else "All instalments in this file were already imported"
+        )
+        raise HTTPException(status_code=409, detail=detail)
+
+    draft_outs = [_draft_out(draft) for draft in result.drafts]
+    return ImportUploadOut(
+        **draft_outs[0].model_dump(),
+        drafts=draft_outs,
+        skipped_duplicates=result.skipped_duplicates,
+    )
 
 
 @router.get("/drafts", response_model=list[ImportDraftOut])
