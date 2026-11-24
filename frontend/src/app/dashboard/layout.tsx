@@ -62,7 +62,7 @@ export default function DashboardLayout({
   return (
     <div className="flex min-h-screen flex-col">
       {/* Top nav */}
-      <header className="relative sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-700 dark:bg-slate-800/80">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white md:bg-white/80 md:backdrop-blur dark:border-slate-700 dark:bg-slate-800 md:dark:bg-slate-800/80">
         <div className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-3">
           {/* Brand */}
           <Link
