@@ -112,7 +112,11 @@ export default function MiniCalendar({ month, instances, todayStr }: Props) {
                   {visible.map((inst) => (
                     <span
                       key={inst.id}
-                      className={`h-1.5 w-1.5 rounded-full bg-current ${STATUS_STYLES[inst.status] ?? ""}`}
+                      className={`h-1.5 w-1.5 rounded-full bg-current ${
+                        inst.amount_estimated && inst.status !== "paid"
+                          ? "text-amber-500 dark:text-amber-400"
+                          : (STATUS_STYLES[inst.status] ?? "")
+                      }`}
                     />
                   ))}
                   {extra > 0 && (

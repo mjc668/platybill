@@ -104,17 +104,20 @@ function uniqueCategories(categories: Category[]): Category[] {
   return [...byId.values()];
 }
 
-const SECTION_KEYS = ["overdue", "upcoming", "paid"] as const;
+const SECTION_KEYS = ["overdue", "estimated", "upcoming", "paid"] as const;
 type SectionKey = (typeof SECTION_KEYS)[number];
+const ESTIMATED_VISIBLE_CAP = 5;
 
 const SECTION_LABEL_KEYS = {
   overdue: "sectionOverdue",
+  estimated: "sectionEstimated",
   upcoming: "sectionUpcoming",
   paid: "sectionPaid",
 } as const satisfies Record<SectionKey, string>;
 
 const SECTION_TITLE_CLASS: Record<SectionKey, string> = {
   overdue: "text-red-500 dark:text-red-400",
+  estimated: "text-amber-600 dark:text-amber-400",
   upcoming: "text-slate-400 dark:text-slate-500",
   paid: "text-blue-600 dark:text-blue-400",
 };
@@ -151,7 +154,9 @@ function PaymentsPageInner() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchFilter, setSearchFilter] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
-  const [reviewCount, setReviewCount] = useState(0);
+  const [reviewDueNowCount, setReviewDueNowCount] = useState(0);
+  const [reviewFutureCount, setReviewFutureCount] = useState(0);
+  const [showAllEstimates, setShowAllEstimates] = useState(false);
 
   // Derived: true whenever selectedMonth hasn't finished loading yet.
   // Becomes true immediately when selectedMonth changes (same render), so no
@@ -217,27 +222,36 @@ function PaymentsPageInner() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchNeedsConfirmation()
+    fetchNeedsConfirmation(true)
       .then((estimates) => {
-        if (!cancelled) setReviewCount(estimates.length);
+        if (cancelled) return;
+        const dueNow = estimates.filter((e) => e.period <= currentMonth).length;
+        const future = estimates.length - dueNow;
+        setReviewDueNowCount(dueNow);
+        setReviewFutureCount(future);
       })
       .catch(() => {
-        if (!cancelled) setReviewCount(0);
+        if (!cancelled) {
+          setReviewDueNowCount(0);
+          setReviewFutureCount(0);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [reloadToken]);
+  }, [reloadToken, currentMonth]);
 
   function handleInstanceDeleted(id: number) {
     setInstances((prev) => prev.filter((inst) => inst.id !== id));
     setDeleteTarget(null);
+    setReloadToken((token) => token + 1);
   }
 
   function handleInstanceReverted(updated: PaymentInstanceOut) {
     setInstances((prev) =>
       prev.map((inst) => (inst.id === updated.id ? updated : inst)),
     );
+    setReloadToken((token) => token + 1);
   }
 
   const [selectedYear, setSelectedYear] = useState(currentYear);
@@ -280,16 +294,28 @@ function PaymentsPageInner() {
     return true;
   });
 
-  const monthDue = sumByCurrency(instances, dueAmount);
-  const monthPaid = sumByCurrency(instances, paidAmount);
-  const monthRemaining = sumByCurrency(instances, remainingAmount);
+  const confirmedInstances = instances.filter(
+    (inst) => !(inst.amount_estimated && inst.status !== "paid"),
+  );
+  const estimatedInstances = instances.filter(
+    (inst) => inst.amount_estimated && inst.status !== "paid",
+  );
 
-  // Urgency-first list: overdue, then upcoming, then paid — each by due date.
-  // Totals use the remaining balance (or the paid amount for the Paid section)
-  // and are grouped per currency since bills can differ.
+  const monthDue = sumByCurrency(confirmedInstances, dueAmount);
+  const monthPaid = sumByCurrency(confirmedInstances, paidAmount);
+  const monthRemaining = sumByCurrency(confirmedInstances, remainingAmount);
+  const monthEstimated = sumByCurrency(estimatedInstances, remainingAmount);
+
+  // Urgency-first list: overdue, estimated (unconfirmed), upcoming, then paid —
+  // each by due date. Confirmed totals stay separate from unconfirmed estimates.
   const sections = SECTION_KEYS.map((key) => {
     const items = filteredInstances
-      .filter((inst) => inst.status === key)
+      .filter((inst) => {
+        const isEst = inst.amount_estimated && inst.status !== "paid";
+        if (key === "estimated") return isEst;
+        if (key === "paid") return inst.status === "paid";
+        return !isEst && inst.status === key;
+      })
       .sort(
         (a, b) =>
           a.due_date.localeCompare(b.due_date) ||
@@ -297,8 +323,13 @@ function PaymentsPageInner() {
       );
     const valueOf = key === "paid" ? paidAmount : remainingAmount;
     const totals = sumByCurrency(items, valueOf);
+    const visibleItems =
+      key === "estimated" && !showAllEstimates
+        ? items.slice(0, ESTIMATED_VISIBLE_CAP)
+        : items;
+    const hiddenCount = items.length - visibleItems.length;
     const groups: { dueDate: string; items: PaymentInstanceOut[] }[] = [];
-    for (const inst of items) {
+    for (const inst of visibleItems) {
       const last = groups[groups.length - 1];
       if (last && last.dueDate === inst.due_date) {
         last.items.push(inst);
@@ -316,7 +347,7 @@ function PaymentsPageInner() {
             }),
           })).filter((bucket) => bucket.items.length > 0)
         : [];
-    return { key, items, totals, groups, aging };
+    return { key, items, totals, groups, aging, hiddenCount };
   }).filter((section) => section.items.length > 0);
 
   // The calendar stays month-scoped even when the list includes overdue items
@@ -361,15 +392,26 @@ function PaymentsPageInner() {
           onDeleted={handleInstanceDeleted}
         />
       )}
-      {reviewCount > 0 && (
+      {reviewDueNowCount > 0 ? (
         <Link
           href="/dashboard/bills"
           data-testid="bills-to-review-link"
           className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-3 py-2 text-sm text-blue-800 transition-colors hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-900/10 dark:text-blue-300 dark:hover:bg-blue-900/20"
         >
-          <span>{t("reviewLink", { count: reviewCount })}</span>
+          <span>{t("reviewLink", { count: reviewDueNowCount })}</span>
           <span className="font-medium">{t("reviewLinkAction")} →</span>
         </Link>
+      ) : (
+        reviewFutureCount > 0 && (
+          <Link
+            href="/dashboard/bills"
+            data-testid="bills-to-review-link"
+            className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 px-3 py-2 text-sm text-amber-800 transition-colors hover:bg-amber-100/70 dark:border-amber-800/70 dark:bg-amber-900/15 dark:text-amber-300 dark:hover:bg-amber-900/25"
+          >
+            <span>{t("reviewUpcomingLink", { count: reviewFutureCount })}</span>
+            <span className="font-medium">{t("reviewLinkAction")} →</span>
+          </Link>
+        )
       )}
 
       {/* Page header */}
@@ -568,12 +610,14 @@ function PaymentsPageInner() {
           <div className="mt-0.5 flex items-center justify-between gap-3">
             <p className="text-sm text-slate-500 dark:text-slate-400">
               {[
-                instances.filter((i) => i.status === "upcoming").length > 0 &&
-                  `${instances.filter((i) => i.status === "upcoming").length} ${tRow("status.upcoming").toLowerCase()}`,
-                instances.filter((i) => i.status === "overdue").length > 0 &&
-                  `${instances.filter((i) => i.status === "overdue").length} ${tRow("status.overdue").toLowerCase()}`,
-                instances.filter((i) => i.status === "paid").length > 0 &&
-                  `${instances.filter((i) => i.status === "paid").length} ${tRow("status.paid").toLowerCase()}`,
+                confirmedInstances.filter((i) => i.status === "upcoming").length > 0 &&
+                  `${confirmedInstances.filter((i) => i.status === "upcoming").length} ${tRow("status.upcoming").toLowerCase()}`,
+                confirmedInstances.filter((i) => i.status === "overdue").length > 0 &&
+                  `${confirmedInstances.filter((i) => i.status === "overdue").length} ${tRow("status.overdue").toLowerCase()}`,
+                estimatedInstances.length > 0 &&
+                  `${estimatedInstances.length} ${t("summaryEstimated")}`,
+                confirmedInstances.filter((i) => i.status === "paid").length > 0 &&
+                  `${confirmedInstances.filter((i) => i.status === "paid").length} ${tRow("status.paid").toLowerCase()}`,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -621,6 +665,22 @@ function PaymentsPageInner() {
                 </div>
               );
             })}
+            {estimatedInstances.length > 0 && (
+              <p
+                data-testid="estimated-total-summary"
+                className="text-xs font-medium italic tabular-nums text-amber-700 dark:text-amber-400"
+              >
+                {t("monthEstimated", {
+                  amount: [...monthEstimated]
+                    .map(
+                      ([cur, value]) =>
+                        `~${amountFormatter.format(value)} ${cur}`,
+                    )
+                    .join(" · "),
+                  count: estimatedInstances.length,
+                })}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -700,7 +760,7 @@ function PaymentsPageInner() {
       {/* Payment list */}
       {!loading && !loadError && view === "list" && filteredInstances.length > 0 && (
         <div className="flex flex-col gap-4">
-          {sections.map(({ key, items, totals, groups, aging }) => (
+          {sections.map(({ key, items, totals, groups, aging, hiddenCount }) => (
             <div key={key} data-testid={`payment-section-${key}`}>
               <button
                 onClick={() => toggle(key)}
@@ -720,11 +780,17 @@ function PaymentsPageInner() {
                 <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 text-xs font-semibold text-slate-400 dark:text-slate-500 shrink-0 tabular-nums">
                   {items.length}
                 </span>
-                <span className="shrink-0 text-xs font-medium tabular-nums text-slate-400 dark:text-slate-500">
+                <span
+                  className={`shrink-0 text-xs font-medium tabular-nums ${
+                    key === "estimated"
+                      ? "italic text-amber-600 dark:text-amber-400"
+                      : "text-slate-400 dark:text-slate-500"
+                  }`}
+                >
                   {[...totals]
                     .map(
                       ([cur, value]) =>
-                        `${amountFormatter.format(value)} ${cur}`,
+                        `${key === "estimated" ? "~" : ""}${amountFormatter.format(value)} ${cur}`,
                     )
                     .join(" · ")}
                 </span>
@@ -759,7 +825,14 @@ function PaymentsPageInner() {
                         <span className="shrink-0 text-[11px] font-semibold capitalize text-slate-500 dark:text-slate-400">
                           {formatDayLabel(group.dueDate, locale)}
                         </span>
-                        <span className="shrink-0 text-[11px] font-medium tabular-nums text-slate-400 dark:text-slate-500">
+                        <span
+                          className={`shrink-0 text-[11px] font-medium tabular-nums ${
+                            key === "estimated"
+                              ? "italic text-amber-600 dark:text-amber-400"
+                              : "text-slate-400 dark:text-slate-500"
+                          }`}
+                        >
+                          {key === "estimated" ? "~" : ""}
                           {formatCurrencyTotals(
                             sumByCurrency(
                               group.items,
@@ -782,6 +855,17 @@ function PaymentsPageInner() {
                       ))}
                     </Fragment>
                   ))}
+                  {key === "estimated" && items.length > ESTIMATED_VISIBLE_CAP && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllEstimates((prev) => !prev)}
+                      className="mt-1 self-start rounded-lg border border-dashed border-amber-300 bg-amber-50/50 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100/70 dark:border-amber-700/70 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                    >
+                      {showAllEstimates
+                        ? t("showFewerEstimates")
+                        : t("showMoreEstimates", { count: hiddenCount })}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

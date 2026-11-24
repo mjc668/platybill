@@ -109,11 +109,13 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const isDueToday = dueDate.getTime() === today.getTime();
+  const isEstimated = instance.amount_estimated && instance.status !== "paid";
 
   function tileGradientClass(): string {
     const base = "bg-gradient-to-r from-0% to-70%";
     if (instance.status === "overdue") return `${base} from-red-100 to-white dark:from-red-500/10 dark:to-slate-800`;
     if (instance.status === "paid") return `${base} from-blue-100 to-white dark:from-blue-500/10 dark:to-slate-800`;
+    if (isEstimated) return `${base} from-amber-50/90 to-white dark:from-amber-500/10 dark:to-slate-800`;
     if (isDueToday) return `${base} from-orange-100 to-white dark:from-orange-400/10 dark:to-slate-800`;
     return `${base} from-blue-100 to-white dark:from-blue-400/10 dark:to-slate-800`;
   }
@@ -147,14 +149,27 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
   return (
     <div
       data-testid="payment-row"
-      className={`rounded-xl border border-slate-200 px-4 py-3 shadow-sm dark:border-slate-700 transition-colors ${tileGradientClass()}`}
+      data-estimated={isEstimated ? "true" : "false"}
+      className={`rounded-xl border px-4 py-3 shadow-sm transition-colors ${
+        isEstimated
+          ? "border-dashed border-amber-300 dark:border-amber-700/70"
+          : "border-slate-200 dark:border-slate-700"
+      } ${tileGradientClass()}`}
     >
       <div className="flex flex-col gap-1 sm:gap-0.5">
-        {/* Name + category + account */}
+        {/* Name + category + account + estimate indicator */}
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
           <span className="font-semibold text-sm sm:text-base text-slate-800 dark:text-slate-100 truncate">
             {instance.bill_name}
           </span>
+          {isEstimated && (
+            <span
+              data-testid="estimate-badge"
+              className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+            >
+              {t("estimatedBadge")}
+            </span>
+          )}
           <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
             {categoryLabel(instance.category, tRoot)}
           </span>
@@ -166,8 +181,14 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
         </div>
         {/* Amount */}
         {parseFloat(instance.amount) > 0 && (
-          <span className="text-sm sm:text-xs font-semibold sm:font-medium text-slate-700 dark:text-slate-200">
-            {instance.amount} {instance.currency}
+          <span
+            className={
+              isEstimated
+                ? "text-sm sm:text-xs font-medium italic text-amber-800 dark:text-amber-300"
+                : "text-sm sm:text-xs font-semibold sm:font-medium text-slate-700 dark:text-slate-200"
+            }
+          >
+            {isEstimated ? `~${instance.amount}` : instance.amount} {instance.currency}
           </span>
         )}
         {/* Due date + status (left) — actions (right) */}
@@ -197,6 +218,17 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
 
           {/* Actions */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto">
+            {/* Confirm estimate — prominent action for unconfirmed estimated rows */}
+            {!readOnly && isEstimated && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs sm:text-sm font-semibold sm:font-medium text-amber-800 shadow-sm transition-all hover:border-amber-400 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
+              >
+                <Pencil size={14} />
+                <span>{t("confirmAmount")}</span>
+              </button>
+            )}
             {/* Primary action */}
             {!readOnly && instance.status !== "paid" && (
               <button
@@ -207,8 +239,8 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
                 <span>{t("markAsPaid")}</span>
               </button>
             )}
-            {/* Edit amount — unpaid rows only */}
-            {!readOnly && instance.status !== "paid" && (
+            {/* Edit amount — confirmed unpaid rows only */}
+            {!readOnly && instance.status !== "paid" && !isEstimated && (
               <button
                 onClick={() => setEditOpen(true)}
                 aria-label={t("editAmount")}

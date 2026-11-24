@@ -89,8 +89,16 @@ export default function PaymentCalendar({
       month: "long",
     }).format(new Date(key + "T00:00:00"));
 
-  const formatRemaining = (items: PaymentInstanceOut[]) =>
-    formatCurrencyTotals(sumByCurrency(items, remainingAmount), amountFormatter);
+  const formatRemaining = (items: PaymentInstanceOut[]) => {
+    const formatted = formatCurrencyTotals(
+      sumByCurrency(items, remainingAmount),
+      amountFormatter,
+    );
+    const hasEstimated = items.some(
+      (inst) => inst.amount_estimated && inst.status !== "paid",
+    );
+    return hasEstimated && formatted ? `~${formatted}` : formatted;
+  };
 
   const days: (string | null)[] = [
     ...Array.from({ length: offset }, () => null),
@@ -167,7 +175,9 @@ export default function PaymentCalendar({
                         <span
                           key={inst.id}
                           className={`h-1.5 w-1.5 rounded-full ${
-                            DOT_COLORS[inst.status] ?? "bg-slate-400"
+                            inst.amount_estimated && inst.status !== "paid"
+                              ? "bg-amber-500"
+                              : (DOT_COLORS[inst.status] ?? "bg-slate-400")
                           }`}
                         />
                       ))}
@@ -180,16 +190,22 @@ export default function PaymentCalendar({
 
                     {/* Desktop: detailed chips */}
                     <div className="hidden sm:flex flex-col gap-1 w-full">
-                      {visible.map((inst) => (
-                        <span
-                          key={inst.id}
-                          className={`block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${
-                            STATUS_STYLES[inst.status] ?? ""
-                          }`}
-                        >
-                          {inst.bill_name} · {inst.amount}
-                        </span>
-                      ))}
+                      {visible.map((inst) => {
+                        const isEst =
+                          inst.amount_estimated && inst.status !== "paid";
+                        return (
+                          <span
+                            key={inst.id}
+                            className={`block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${
+                              isEst
+                                ? "border border-dashed border-amber-400 bg-amber-50 text-amber-800 italic dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                                : (STATUS_STYLES[inst.status] ?? "")
+                            }`}
+                          >
+                            {inst.bill_name} · {isEst ? `~${inst.amount}` : inst.amount}
+                          </span>
+                        );
+                      })}
                       {extra > 0 && (
                         <span className="block text-center text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                           +{extra}
