@@ -53,12 +53,53 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+_SERVICE_KEYWORD_GROUPS: dict[str, str] = {
+    "water": "water",
+    "sewer": "water",
+    "sewerage": "water",
+    "rates": "rates",
+    "waste": "waste",
+    "rubbish": "waste",
+    "garbage": "waste",
+    "electricity": "electricity",
+    "power": "electricity",
+    "gas": "gas",
+    "internet": "internet",
+    "nbn": "internet",
+    "broadband": "internet",
+    "mobile": "phone",
+    "phone": "phone",
+    "insurance": "insurance",
+    "strata": "strata",
+    "levy": "strata",
+    "levies": "strata",
+    "rent": "rent",
+}
+
+
 def _tokens(value: str) -> set[str]:
     return {
         t
         for t in "".join(c.lower() if c.isalnum() else " " for c in value).split()
         if len(t) > 2
     }
+
+
+def _service_groups(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {
+        _SERVICE_KEYWORD_GROUPS[t]
+        for t in _tokens(value)
+        if t in _SERVICE_KEYWORD_GROUPS
+    }
+
+
+def _due_day_matches(bill: BillTemplate, due_date: date | None) -> bool:
+    if due_date is None or bill.due_day is None:
+        return False
+    expected = _due_date_for_period(due_date.strftime("%Y-%m"), bill.due_day)
+    return expected == due_date
 
 
 def resolve_import_user(db: Session) -> User | None:
@@ -76,8 +117,21 @@ def resolve_import_user(db: Session) -> User | None:
     return users[0] if len(users) == 1 else None
 
 
-def match_bill(db: Session, user_id: int, extracted: ExtractedBill) -> int | None:
-    """Best token-overlap match of the provider against active bill names."""
+def match_bill(
+    db: Session,
+    user_id: int,
+    extracted: ExtractedBill,
+    *,
+    filename: str | None = None,
+) -> int | None:
+    """Match an extracted document to an active bill template.
+
+    Issuer token overlap (against template name and notes) is the first pass.
+    Any candidate whose service keyword explicitly contradicts the document is
+    disqualified. When multiple templates tie on issuer overlap, disambiguate
+    by service keywords and due day; if still ambiguous, return None so the
+    draft stays pending for manual selection.
+    """
     if not extracted.provider:
         return None
     provider_tokens = _tokens(extracted.provider)
@@ -92,16 +146,47 @@ def match_bill(db: Session, user_id: int, extracted: ExtractedBill) -> int | Non
         )
         .all()
     )
-    best_id: int | None = None
-    best_score = 0.0
+
+    doc_text = " ".join(
+        part for part in (extracted.provider, extracted.raw_text, filename) if part
+    )
+    doc_services = _service_groups(doc_text)
+
+    candidates: list[tuple[BillTemplate, float]] = []
     for bill in bills:
-        overlap = provider_tokens & _tokens(bill.name)
+        bill_tokens = _tokens(bill.name) | (
+            _tokens(bill.notes) if bill.notes else set()
+        )
+        overlap = provider_tokens & bill_tokens
         if not overlap:
             continue
         score = len(overlap) / len(provider_tokens)
-        if score > best_score:
-            best_id, best_score = bill.id, score
-    return best_id if best_score >= MATCH_THRESHOLD else None
+        if score < MATCH_THRESHOLD:
+            continue
+        bill_services = _service_groups(bill.name)
+        if bill_services and doc_services and bill_services.isdisjoint(doc_services):
+            continue
+        candidates.append((bill, score))
+
+    if not candidates:
+        return None
+
+    best_score = max(score for _, score in candidates)
+    top = [bill for bill, score in candidates if score == best_score]
+    if len(top) == 1:
+        return top[0].id
+
+    def _disambig_score(bill: BillTemplate) -> int:
+        service_hit = 1 if (_service_groups(bill.name) & doc_services) else 0
+        due_hit = 1 if _due_day_matches(bill, extracted.due_date) else 0
+        return service_hit + due_hit
+
+    scored = [(bill, _disambig_score(bill)) for bill in top]
+    best_disambig = max(score for _, score in scored)
+    if best_disambig == 0:
+        return None
+    winners = [bill for bill, score in scored if score == best_disambig]
+    return winners[0].id if len(winners) == 1 else None
 
 
 def create_draft(
@@ -131,7 +216,7 @@ def create_draft(
         due_date=extracted.due_date,
         period=extracted.period,
         raw_text=extracted.raw_text,
-        matched_bill_id=match_bill(db, user_id, extracted),
+        matched_bill_id=match_bill(db, user_id, extracted, filename=filename),
         status=ImportStatus.pending,
         meta=meta,
     )
