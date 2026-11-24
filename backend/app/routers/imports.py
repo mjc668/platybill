@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import current_user, require_install_owner
+from app.core.deps import (
+    WorkspaceContext,
+    require_install_owner,
+    require_session_auth,
+    workspace_context,
+)
 from app.core.ratelimit import rate_limited_by_user
 from app.models.bill import BillTemplate
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
@@ -43,11 +48,11 @@ def _draft_out(draft: ImportDraft) -> ImportDraftOut:
     return out
 
 
-def _scoped_draft(db: Session, draft_id: int, me: User) -> ImportDraft:
+def _scoped_draft(db: Session, draft_id: int, owner_id: int) -> ImportDraft:
     draft = (
         db.query(ImportDraft)
         .options(selectinload(ImportDraft.matched_bill))
-        .filter(ImportDraft.id == draft_id, ImportDraft.user_id == me.id)
+        .filter(ImportDraft.id == draft_id, ImportDraft.user_id == owner_id)
         .first()
     )
     if draft is None:
@@ -70,7 +75,7 @@ def _mask_email(value: str | None) -> str | None:
 def upload_bill(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("imports:write")),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     if app_settings.llm_config(db) is None:
@@ -97,7 +102,7 @@ def upload_bill(
     try:
         draft = import_document(
             db,
-            user_id=me.id,
+            user_id=ws.owner_id,
             data=data,
             filename=file.filename,
             content_type=content_type,
@@ -119,12 +124,12 @@ def upload_bill(
 def list_drafts(
     status_filter: str = Query("pending", alias="status"),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("imports:read")),
 ):
     query = (
         db.query(ImportDraft)
         .options(selectinload(ImportDraft.matched_bill))
-        .filter(ImportDraft.user_id == me.id)
+        .filter(ImportDraft.user_id == ws.owner_id)
     )
     if status_filter != "all":
         try:
@@ -140,9 +145,9 @@ def update_draft(
     draft_id: int,
     body: ImportDraftUpdate,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("imports:write")),
 ):
-    draft = _scoped_draft(db, draft_id, me)
+    draft = _scoped_draft(db, draft_id, ws.owner_id)
     if draft.status != ImportStatus.pending:
         raise HTTPException(status_code=400, detail="Draft is no longer pending")
 
@@ -150,7 +155,7 @@ def update_draft(
     bill_id = updates.pop("matched_bill_id", None)
     if bill_id is not None:
         bill = db.get(BillTemplate, bill_id)
-        if bill is None or bill.user_id != me.id:
+        if bill is None or bill.user_id != ws.owner_id:
             raise HTTPException(status_code=404, detail="Bill not found")
         draft.matched_bill_id = bill.id
     for field, value in updates.items():
@@ -165,9 +170,9 @@ def confirm_import_draft(
     draft_id: int,
     body: ImportConfirmIn,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("imports:write")),
 ):
-    draft = _scoped_draft(db, draft_id, me)
+    draft = _scoped_draft(db, draft_id, ws.owner_id)
     if draft.status != ImportStatus.pending:
         raise HTTPException(status_code=400, detail="Draft is no longer pending")
     try:
@@ -181,9 +186,9 @@ def confirm_import_draft(
 def discard_import_draft(
     draft_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("imports:write")),
 ):
-    draft = _scoped_draft(db, draft_id, me)
+    draft = _scoped_draft(db, draft_id, ws.owner_id)
     discard_draft(db, draft)
 
 
@@ -255,7 +260,7 @@ def _status(db: Session, me: User) -> ImportStatusOut:
 @router.get("/status", response_model=ImportStatusOut)
 def import_status(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
 ):
     require_install_owner(db, me)
     return _status(db, me)
@@ -265,7 +270,7 @@ def import_status(
 def update_import_settings(
     body: ImportSettingsIn,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     require_install_owner(db, me)
@@ -374,7 +379,7 @@ def update_import_settings(
 @router.post("/test-ollama", response_model=TestOllamaOut)
 def test_ollama(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     require_install_owner(db, me)
@@ -407,7 +412,7 @@ def test_ollama(
 @router.get("/imap-folders", response_model=list[str])
 def list_imap_folders(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     """List mailbox folders via IMAP LIST (names only, no secrets echoed)."""
@@ -453,7 +458,7 @@ def list_imap_folders(
 @router.post("/test-imap", response_model=TestImapOut)
 def test_imap(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     """Verify IMAP login + folder selection; returns folder + unseen count."""
@@ -500,7 +505,7 @@ def test_imap(
 @router.post("/scan-now", response_model=ScanNowOut)
 def scan_now(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     require_install_owner(db, me)

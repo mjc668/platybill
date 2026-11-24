@@ -15,6 +15,8 @@ import app.models.restore_snapshot  # noqa: F401
 import app.models.import_draft  # noqa: F401
 import app.models.app_setting  # noqa: F401
 import app.models.passkey  # noqa: F401
+import app.models.family  # noqa: F401
+import app.models.api_key  # noqa: F401
 
 config = context.config
 # An explicitly configured URL (e.g. the ETL script targeting a fresh SQLite

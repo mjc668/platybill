@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import current_user
+from app.core.deps import require_session_auth
 from app.core.ratelimit import rate_limited
 from app.core.security import create_access_token
 from app.models.passkey import Passkey
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/auth/passkeys", tags=["passkeys"])
 )
 def get_registration_options(
     request: Request,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
 ) -> PasskeyRegistrationOptionsResponse:
     options = generate_registration_options_for_user(user, request)
     return PasskeyRegistrationOptionsResponse(options=options)
@@ -51,7 +51,7 @@ def get_registration_options(
 def verify_registration(
     request: Request,
     body: PasskeyRegistrationVerifyRequest,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     db: Session = Depends(get_db),
 ) -> PasskeyOut:
     (
@@ -150,7 +150,7 @@ def verify_login(
     response_model=list[PasskeyOut],
 )
 def list_passkeys(
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     db: Session = Depends(get_db),
 ) -> list[PasskeyOut]:
     passkeys = (
@@ -168,7 +168,7 @@ def list_passkeys(
 )
 def delete_passkey(
     passkey_id: int,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     db: Session = Depends(get_db),
 ) -> MessageResponse:
     passkey = (

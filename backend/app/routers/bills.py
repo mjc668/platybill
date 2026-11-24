@@ -6,7 +6,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
-from app.core.deps import current_user
+from app.core.deps import WorkspaceContext, workspace_context
 from app.core.timezones import user_today
 from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
 from app.models.payment import Payment
@@ -58,17 +58,17 @@ from app.services.recurrence import (
 router = APIRouter(prefix="/bills", tags=["bills"])
 
 
-def _get_visible_bill(db: Session, bill_id: int, me: User) -> BillTemplate:
+def _get_visible_bill(db: Session, bill_id: int, owner_id: int) -> BillTemplate:
     """Scoped bill lookup returning 404 for missing, foreign or deleted bills."""
     bill = db.get(BillTemplate, bill_id)
-    if not bill or bill.user_id != me.id or bill.is_deleted:
+    if not bill or bill.user_id != owner_id or bill.is_deleted:
         raise HTTPException(status_code=404, detail="Bill not found")
     return bill
 
 
 def _resolve_category(
     db: Session,
-    me: User,
+    owner_id: int,
     category_id: int | None,
     legacy_key: str | None,
     *,
@@ -83,12 +83,12 @@ def _resolve_category(
         if category_id is not None:
             return get_category_for_user(
                 db,
-                me.id,
+                owner_id,
                 category_id,
                 allow_archived=category_id == allow_archived_id,
             )
         if legacy_key is not None:
-            return resolve_legacy_key(db, me.id, legacy_key)
+            return resolve_legacy_key(db, owner_id, legacy_key)
     except CategoryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     raise HTTPException(
@@ -97,10 +97,12 @@ def _resolve_category(
     )
 
 
-def _get_scoped_instance(db: Session, instance_id: int, me: User) -> PaymentInstance:
+def _get_scoped_instance(
+    db: Session, instance_id: int, owner_id: int
+) -> PaymentInstance:
     """Load an instance and enforce ownership through bill → template.user_id."""
     instance = db.get(PaymentInstance, instance_id)
-    if not instance or instance.template.user_id != me.id:
+    if not instance or instance.template.user_id != owner_id:
         raise HTTPException(status_code=404, detail="Payment instance not found")
     return instance
 
@@ -142,7 +144,7 @@ def _to_out(
 def list_bills(
     include_archived: bool = False,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     q = (
         db.query(BillTemplate)
@@ -151,7 +153,7 @@ def list_bills(
             selectinload(BillTemplate.preferred_account),
         )
         .filter(
-            BillTemplate.user_id == me.id,
+            BillTemplate.user_id == ws.owner_id,
             BillTemplate.is_deleted.is_(False),
         )
     )
@@ -200,7 +202,7 @@ def list_bills(
 def create_bill(
     body: BillTemplateCreate,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
     from app.models.bill import BillFrequency as BF
 
@@ -231,13 +233,13 @@ def create_bill(
     else:
         start_period = now.strftime("%Y-%m")
 
-    category = _resolve_category(db, me, body.category_id, body.category)
+    category = _resolve_category(db, ws.owner_id, body.category_id, body.category)
 
     preferred_account_id: int | None = None
     if body.preferred_account_id is not None:
         try:
             preferred_account_id = get_account_for_user(
-                db, me.id, body.preferred_account_id
+                db, ws.owner_id, body.preferred_account_id
             ).id
         except BankAccountError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -257,7 +259,7 @@ def create_bill(
         is_paused=body.is_paused,
         # One-off bills are single known charges — never usage-based.
         amount_varies=body.amount_varies if frequency != BF.one_off else False,
-        user_id=me.id,
+        user_id=ws.owner_id,
         start_period=start_period,
     )
     db.add(bill)
@@ -281,9 +283,9 @@ def list_payments(
     include_overdue: bool = Query(False),
     window_days: int | None = Query(None, ge=1, le=365),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
-    today = user_today(me.timezone)
+    today = user_today(ws.actor.timezone)
     current_month = today.strftime("%Y-%m")
     if month is None:
         month = current_month
@@ -329,7 +331,7 @@ def list_payments(
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
-            BillTemplate.user_id == me.id,
+            BillTemplate.user_id == ws.owner_id,
             BillTemplate.is_deleted.is_(False),
             # Archived bills are quiet: their untouched pending rows stay out
             # of the list until the bill is unarchived. Rows with payment
@@ -366,17 +368,17 @@ def add_payment(
     instance_id: int,
     body: PaymentCreate,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
     """Record a partial or full payment event against an instance."""
-    instance = _get_scoped_instance(db, instance_id, me)
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
     template = instance.template
 
     _, became_fully_paid = record_payment(
         db,
         instance,
         amount=body.amount,
-        paid_on=body.paid_on or user_today(me.timezone),
+        paid_on=body.paid_on or user_today(ws.actor.timezone),
         note=body.note,
     )
     paid_due_date = instance.due_date
@@ -398,10 +400,10 @@ def delete_payment_event(
     instance_id: int,
     payment_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
     """Delete a single payment event and recompute the instance summary."""
-    instance = _get_scoped_instance(db, instance_id, me)
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
 
     deleted = delete_payment_record(db, instance, payment_id)
     if not deleted:
@@ -417,7 +419,7 @@ def mark_paid(
     instance_id: int,
     body: MarkPaidRequest,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
     """Legacy mark-as-paid: record one event for the remaining balance.
 
@@ -426,7 +428,7 @@ def mark_paid(
     already fully-paid instance is a no-op (prevents duplicate events from
     retries/double-clicks).
     """
-    instance = _get_scoped_instance(db, instance_id, me)
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
     template = instance.template
 
     if instance.status == PaymentStatus.paid:
@@ -444,7 +446,7 @@ def mark_paid(
         db,
         instance,
         amount=amount,
-        paid_on=user_today(me.timezone),
+        paid_on=user_today(ws.actor.timezone),
         note=body.notes,
     )
     paid_due_date = instance.due_date
@@ -462,10 +464,10 @@ def mark_paid(
 def revert_payment(
     instance_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
     """Revert a fully-paid instance by clearing every payment event."""
-    instance = _get_scoped_instance(db, instance_id, me)
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
     if instance.status != PaymentStatus.paid:
         raise HTTPException(status_code=400, detail="Payment is not marked as paid")
 
@@ -480,11 +482,9 @@ def delete_payment(
     instance_id: int,
     delete_future: bool = Query(False),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
-    instance = db.get(PaymentInstance, instance_id)
-    if not instance or instance.template.user_id != me.id:
-        raise HTTPException(status_code=404, detail="Payment instance not found")
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
 
     instance.is_deleted = True
 
@@ -502,14 +502,14 @@ def delete_payment(
 @router.get("/payments/needs-confirmation", response_model=list[PendingConfirmationOut])
 def needs_confirmation(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     """Variable-bill instances whose amount is still an unconfirmed estimate.
 
     Only instances whose period has arrived are surfaced; future pre-generated
     periods are not nagged about.
     """
-    current_month = user_today(me.timezone).strftime("%Y-%m")
+    current_month = user_today(ws.actor.timezone).strftime("%Y-%m")
     instances = (
         db.query(PaymentInstance)
         .options(
@@ -521,7 +521,7 @@ def needs_confirmation(
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
-            BillTemplate.user_id == me.id,
+            BillTemplate.user_id == ws.owner_id,
             # Archived and deleted bills are quiet: their estimates never nag.
             BillTemplate.is_deleted.is_(False),
             BillTemplate.is_archived.is_(False),
@@ -547,10 +547,10 @@ def update_instance_amount(
     instance_id: int,
     body: InstanceAmountUpdate,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
 ):
     """Set the real amount for an instance and mark it confirmed."""
-    instance = _get_scoped_instance(db, instance_id, me)
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
     if instance.status == PaymentStatus.paid:
         raise HTTPException(
             status_code=400,
@@ -558,7 +558,7 @@ def update_instance_amount(
         )
     instance.amount = body.amount
     instance.amount_estimated = False
-    recalculate_instance(instance, today=user_today(me.timezone))
+    recalculate_instance(instance, today=user_today(ws.actor.timezone))
     db.commit()
     db.refresh(instance)
     return _to_out(instance)
@@ -568,22 +568,22 @@ def update_instance_amount(
 def sync_instances(
     month: str | None = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
     """Explicitly seed payment instances for the given month (or current month).
     Replaces the previous seed-on-read side effect in list_payments."""
-    today = user_today(me.timezone)
+    today = user_today(ws.actor.timezone)
     current_month = today.strftime("%Y-%m")
     target = month or current_month
     if target >= current_month:
-        ensure_current_period_instances(db, target, me.id)
+        ensure_current_period_instances(db, target, ws.owner_id)
 
 
 @router.post("/generate-instances", response_model=GenerateInstancesOut)
 def generate_instances(
     body: GenerateInstancesRequest,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
     """Pre-generate future payment instances for eligible templates.
 
@@ -596,7 +596,7 @@ def generate_instances(
             row[0]
             for row in db.query(BillTemplate.id).filter(
                 BillTemplate.id.in_(requested),
-                BillTemplate.user_id == me.id,
+                BillTemplate.user_id == ws.owner_id,
                 BillTemplate.is_deleted.is_(False),
             )
         }
@@ -604,7 +604,7 @@ def generate_instances(
             raise HTTPException(status_code=404, detail="Bill not found")
 
     created, bill_count = generate_future_instances(
-        db, me.id, body.months, body.bill_ids, today=user_today(me.timezone)
+        db, ws.owner_id, body.months, body.bill_ids, today=user_today(ws.actor.timezone)
     )
     return GenerateInstancesOut(
         created=created, bill_count=bill_count, months=body.months
@@ -617,7 +617,7 @@ def generate_instances(
 def unarchive_bill(
     bill_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
     """Restore an archived bill and resume from the next scheduled occurrence.
 
@@ -627,10 +627,10 @@ def unarchive_bill(
     resumes at the first occurrence on/after today (idempotent on
     `(bill_id, due_date)` and cap-aware).
     """
-    bill = _get_visible_bill(db, bill_id, me)
+    bill = _get_visible_bill(db, bill_id, ws.owner_id)
     bill.is_archived = False
     bill.is_paused = False
-    today = user_today(me.timezone)
+    today = user_today(ws.actor.timezone)
     if bill.archived_at is not None:
         cancel_archived_occurrences(db, bill, bill.archived_at, today)
     bill.archived_at = None
@@ -644,10 +644,10 @@ def unarchive_bill(
 def has_deleted_future(
     bill_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
-    bill = _get_visible_bill(db, bill_id, me)
-    today = user_today(me.timezone)
+    bill = _get_visible_bill(db, bill_id, ws.owner_id)
+    today = user_today(ws.actor.timezone)
     exists = (
         db.query(PaymentInstance)
         .filter(
@@ -666,9 +666,9 @@ def update_bill(
     bill_id: int,
     body: BillTemplateUpdate,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
-    bill = _get_visible_bill(db, bill_id, me)
+    bill = _get_visible_bill(db, bill_id, ws.owner_id)
 
     from app.models.bill import BillFrequency as BF
 
@@ -722,7 +722,7 @@ def update_bill(
 
     if category_id is not None or legacy_key is not None:
         bill.category_id = _resolve_category(
-            db, me, category_id, legacy_key, allow_archived_id=bill.category_id
+            db, ws.owner_id, category_id, legacy_key, allow_archived_id=bill.category_id
         ).id
 
     if "preferred_account_id" in updates:
@@ -732,7 +732,7 @@ def update_bill(
         else:
             try:
                 bill.preferred_account_id = get_account_for_user(
-                    db, me.id, account_id, allow_archived=True
+                    db, ws.owner_id, account_id, allow_archived=True
                 ).id
             except BankAccountError as exc:
                 raise HTTPException(
@@ -772,7 +772,7 @@ def update_bill(
                 continue
             inst.amount = bill.amount
             inst.amount_estimated = False
-            recalculate_instance(inst, today=user_today(me.timezone))
+            recalculate_instance(inst, today=user_today(ws.actor.timezone))
 
     # Recalculate start_period when due_month changes for annual/one_off
     if due_month is not None and effective_frequency in (BF.annual, BF.one_off):
@@ -786,7 +786,7 @@ def update_bill(
     if effective_frequency == BF.weekly:
         if schedule_changed and bill.start_date is not None:
             bill.start_period = bill.start_date.strftime("%Y-%m")
-            recompute_weekly_instances(db, bill, user_today(me.timezone))
+            recompute_weekly_instances(db, bill, user_today(ws.actor.timezone))
     elif due_day_changed:
         unpaid = (
             db.query(PaymentInstance)
@@ -832,7 +832,7 @@ def update_bill(
                     db.delete(inst)
 
     if body.recreate_deleted_future:
-        today = user_today(me.timezone)
+        today = user_today(ws.actor.timezone)
         tombstones = (
             db.query(PaymentInstance)
             .filter(
@@ -859,7 +859,7 @@ def update_bill(
             inst.status = PaymentStatus.upcoming
 
     if prune_needed:
-        prune_occurrences_beyond_cap(db, bill, user_today(me.timezone))
+        prune_occurrences_beyond_cap(db, bill, user_today(ws.actor.timezone))
 
     db.commit()
     db.refresh(bill)
@@ -870,9 +870,9 @@ def update_bill(
 def archive_bill(
     bill_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
-    bill = _get_visible_bill(db, bill_id, me)
+    bill = _get_visible_bill(db, bill_id, ws.owner_id)
     bill.is_archived = True
     # Stamped so unarchive can cancel occurrences due inside the archived span.
     bill.archived_at = datetime.now(timezone.utc)
@@ -883,7 +883,7 @@ def archive_bill(
 def delete_bill(
     bill_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:write")),
 ):
     """Soft-delete an archived bill.
 
@@ -891,7 +891,7 @@ def delete_bill(
     is hidden from every frontend view. Bills must be archived first so the
     delete is always a deliberate second step.
     """
-    bill = _get_visible_bill(db, bill_id, me)
+    bill = _get_visible_bill(db, bill_id, ws.owner_id)
     if not bill.is_archived:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

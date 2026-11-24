@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import current_user, require_install_owner
+from app.core.deps import require_install_owner, require_session_auth
 from app.core.ratelimit import rate_limited_by_user
 from app.models.user import User
 from app.schemas.notifications import (
@@ -41,7 +41,7 @@ def _status(db: Session) -> NotificationSettingsOut:
 @router.get("/settings", response_model=NotificationSettingsOut)
 def get_notification_settings(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
 ):
     require_install_owner(db, me)
     return _status(db)
@@ -51,7 +51,7 @@ def get_notification_settings(
 def update_notification_settings(
     body: NotificationSettingsIn,
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    me: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("import")),
 ):
     require_install_owner(db, me)

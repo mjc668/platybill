@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import current_user, optional_current_user
+from app.core.deps import current_user, optional_current_user, require_session_auth
 from app.core.logging_utils import mask_email
 from app.core.ratelimit import rate_limited, rate_limited_by_user, rate_limited_key
 from app.core.security import (
@@ -179,7 +179,7 @@ def get_me(user: User = Depends(current_user)):
 @router.patch("/me", response_model=UserProfileOut)
 def update_me(
     body: UserProfileUpdate,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     db: Session = Depends(get_db),
 ):
     # UserProfileUpdate is the security boundary — only fields declared there are patchable.
@@ -193,7 +193,7 @@ def update_me(
 @router.delete("/users/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_me(
     response: Response,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     db: Session = Depends(get_db),
 ):
     db.delete(user)
@@ -204,7 +204,7 @@ def delete_me(
 @router.patch("/change-password", status_code=status.HTTP_200_OK)
 def change_password(
     body: ChangePasswordRequest,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("change_password")),
     db: Session = Depends(get_db),
 ):
@@ -266,7 +266,7 @@ def server_time(_: User = Depends(current_user)):
 @router.patch("/change-email", response_model=UserProfileOut)
 def change_email(
     body: ChangeEmailRequest,
-    user: User = Depends(current_user),
+    user: User = Depends(require_session_auth),
     _rl: None = Depends(rate_limited_by_user("change_email")),
     db: Session = Depends(get_db),
 ):

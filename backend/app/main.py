@@ -14,11 +14,13 @@ logging.getLogger("app").setLevel(logging.INFO)
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.routers import (
+    api_keys,
     auth,
     bank_accounts,
     bills,
     categories,
     export,
+    family,
     imports,
     notifications,
     passkeys,
@@ -84,6 +86,8 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(api_keys.router)
+app.include_router(family.router)
 app.include_router(bank_accounts.router)
 app.include_router(bills.router)
 app.include_router(categories.router)

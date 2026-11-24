@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     restore_rate_window_seconds: int = 3600
     passkey_rate_limit: int = 20
     passkey_rate_window_seconds: int = 300
+    api_key_rate_limit: int = 20
+    api_key_rate_window_seconds: int = 3600
+    family_rate_limit: int = 30
+    family_rate_window_seconds: int = 3600
 
     jwt_secret: SecretStr = SecretStr(_DEFAULT_JWT_SECRET)
     jwt_algorithm: str = "HS256"

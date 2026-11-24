@@ -11,6 +11,8 @@ import SnapshotRecoverySection from "@/components/SnapshotRecoverySection";
 import { Tile } from "@/components/settings/Tile";
 import { ProfileTile } from "@/components/settings/ProfileTile";
 import { PasskeysTile } from "@/components/settings/PasskeysTile";
+import { FamilyTile } from "@/components/settings/FamilyTile";
+import { ApiKeysTile } from "@/components/settings/ApiKeysTile";
 import { InstallAppTile } from "@/components/settings/InstallAppTile";
 import { EmailNotificationsTile } from "@/components/settings/EmailNotificationsTile";
 import { BrowserNotificationsTile } from "@/components/settings/BrowserNotificationsTile";
@@ -155,6 +157,8 @@ export default function SettingsPage() {
           t={t}
         />
         <PasskeysTile t={t} />
+        <FamilyTile t={t} />
+        <ApiKeysTile t={t} />
         <InstallAppTile />
       </div>
 

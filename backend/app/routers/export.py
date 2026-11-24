@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import current_user
+from app.core.deps import WorkspaceContext, workspace_context
 from app.core.timezones import user_today
 from app.core.ratelimit import rate_limited_by_user
 from app.models.bill import (
@@ -56,10 +56,10 @@ _COLUMNS = [
 def export_xlsx(
     year: int | None = Query(None, ge=2000, le=2100),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     if year is None:
-        year = user_today(me.timezone).year
+        year = user_today(ws.actor.timezone).year
     instances = (
         db.query(PaymentInstance)
         .options(
@@ -67,7 +67,7 @@ def export_xlsx(
         )
         .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
-            BillTemplate.user_id == me.id,
+            BillTemplate.user_id == ws.owner_id,
             BillTemplate.is_deleted.is_(False),
             PaymentInstance.period.startswith(f"{year}-"),
             PaymentInstance.is_deleted.is_(False),
@@ -77,7 +77,7 @@ def export_xlsx(
     )
 
     # Index instances by month number (1–12)
-    language = me.language_preference
+    language = ws.actor.language_preference
     by_month: dict[int, list[dict]] = {m: [] for m in range(1, 13)}
     for i in instances:
         month = int(i.period[5:7])
@@ -219,13 +219,13 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
 @router.get("/json")
 def export_json(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     payload = {
         "schema_version": 8,
-        "exported_by": me.email,
+        "exported_by": ws.actor.email,
         "exported_at": datetime.now(timezone.utc).isoformat(),
-        **_build_backup_arrays(db, me.id),
+        **_build_backup_arrays(db, ws.owner_id),
     }
     return Response(
         content=json.dumps(payload, indent=2),
@@ -239,11 +239,13 @@ def export_json(
 @router.get("/summary", response_model=ExportSummaryOut)
 def export_summary(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
     template_ids = [
         t.id
-        for t in db.query(BillTemplate.id).filter(BillTemplate.user_id == me.id).all()
+        for t in db.query(BillTemplate.id)
+        .filter(BillTemplate.user_id == ws.owner_id)
+        .all()
     ]
     bill_count = len(template_ids)
     payment_count = (
@@ -390,7 +392,7 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
 def restore_json(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("export:write")),
     _rl: None = Depends(rate_limited_by_user("restore")),
 ):
     _ALLOWED_TYPES = ("application/json", "text/plain", "application/octet-stream")
@@ -437,20 +439,20 @@ def restore_json(
         raise HTTPException(status_code=422, detail="Backup contains orphaned payments")
 
     has_existing_bills = (
-        db.query(BillTemplate.id).filter(BillTemplate.user_id == me.id).first()
+        db.query(BillTemplate.id).filter(BillTemplate.user_id == ws.owner_id).first()
         is not None
     )
     if has_existing_bills:
         snapshot_payload = {
             "schema_version": 8,
-            **_build_backup_arrays(db, me.id),
+            **_build_backup_arrays(db, ws.owner_id),
         }
-        db.query(RestoreSnapshot).filter(RestoreSnapshot.user_id == me.id).delete(
+        db.query(RestoreSnapshot).filter(RestoreSnapshot.user_id == ws.owner_id).delete(
             synchronize_session=False
         )
-        db.add(RestoreSnapshot(user_id=me.id, payload=snapshot_payload))
+        db.add(RestoreSnapshot(user_id=ws.owner_id, payload=snapshot_payload))
 
-    restored_templates, restored_instances = _apply_backup(db, me.id, backup)
+    restored_templates, restored_instances = _apply_backup(db, ws.owner_id, backup)
     # Single commit for snapshot write + destructive delete + re-insert: if any
     # of it raises, nothing above commits — do not split this into multiple
     # commits, it would break the "abort restore on snapshot failure" guarantee.
@@ -481,9 +483,9 @@ def _active_snapshot(db: Session, user_id: int) -> RestoreSnapshot | None:
 @router.get("/last-snapshot", response_model=RestoreSnapshotOut)
 def last_snapshot(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("bills:read")),
 ):
-    snapshot = _active_snapshot(db, me.id)
+    snapshot = _active_snapshot(db, ws.owner_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No recoverable snapshot")
     return RestoreSnapshotOut(created_at=snapshot.created_at)
@@ -492,9 +494,9 @@ def last_snapshot(
 @router.post("/restore-snapshot")
 def restore_from_snapshot(
     db: Session = Depends(get_db),
-    me: User = Depends(current_user),
+    ws: WorkspaceContext = Depends(workspace_context("export:write")),
 ):
-    snapshot = _active_snapshot(db, me.id)
+    snapshot = _active_snapshot(db, ws.owner_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="No snapshot to restore")
 
@@ -504,7 +506,7 @@ def restore_from_snapshot(
         raise HTTPException(status_code=422, detail=str(e))
     except (ValueError, AttributeError, RecursionError):
         raise HTTPException(status_code=422, detail="Invalid snapshot payload")
-    restored_templates, restored_instances = _apply_backup(db, me.id, backup)
+    restored_templates, restored_instances = _apply_backup(db, ws.owner_id, backup)
     db.delete(snapshot)
     db.commit()
 

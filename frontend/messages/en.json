@@ -519,6 +519,14 @@
             "title": "Bill import",
             "description": "Upload or ingest bills from a folder or mailbox and extract the amount with your local model. Every import is reviewed before it is applied."
         },
+        "family": {
+            "title": "Family Members",
+            "description": "Share your household bills, payments, and imports with family members using granular permission scopes."
+        },
+        "apiKeys": {
+            "title": "API Keys",
+            "description": "Create scoped, revocable API keys for agents and automations without sharing your password."
+        },
         "pageTitle": "Settings",
         "tabs": {
             "account": "Account",
