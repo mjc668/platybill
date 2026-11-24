@@ -12,7 +12,7 @@ import base64
 import io
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -24,7 +24,13 @@ from app.services.llm import (
     generate_json,
     generate_text,
 )
-from app.services.afterpay_parser import ExtractedBnpl, InstallmentDetail
+from app.services.afterpay_parser import (
+    BnplInstallmentRow,
+    ExtractedBnpl,
+    InstallmentDetail,
+    parse_afterpay_installments_payload,
+    parse_afterpay_orders_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,48 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "type": "number",
             "description": "0-1 confidence in the extracted fields",
         },
+        "installments": {
+            "type": ["array", "null"],
+            "description": (
+                "When the document is a Buy Now Pay Later (e.g. Afterpay) "
+                "instalment list showing upcoming payments with an 'n of m' "
+                "counter, list each complete visible row here instead of "
+                "summing them into amount. Set to null for ordinary single bills."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "merchant": {
+                        "type": "string",
+                        "description": "Merchant or store name verbatim as shown",
+                    },
+                    "amount": {
+                        "type": ["number", "string"],
+                        "description": "Instalment amount (e.g. 28.50)",
+                    },
+                    "due_date": {
+                        "type": "string",
+                        "description": (
+                            "Due date as shown (e.g. 'Sun, 27 Dec', '3 Jan, 2027', "
+                            "or 'YYYY-MM-DD')"
+                        ),
+                    },
+                    "installment_number": {
+                        "type": ["integer", "null"],
+                        "description": "The n in 'n of m' (e.g. 3)",
+                    },
+                    "total_installments": {
+                        "type": ["integer", "null"],
+                        "description": "The m in 'n of m' (e.g. 4)",
+                    },
+                    "installment_label": {
+                        "type": ["string", "null"],
+                        "description": "Counter text such as '3 of 4'",
+                    },
+                },
+                "required": ["merchant", "amount", "due_date"],
+            },
+        },
     },
     "required": ["provider", "amount", "due_date"],
 }
@@ -75,11 +123,19 @@ _NUEXTRACT_TEMPLATE = (
 
 _INSTRUCTIONS = (
     "Extract the bill details from this document. Return only the JSON object. "
-    "amount is the total amount due as a decimal with cents (e.g. 87.30, no currency symbol). "
-    "due_date is the payment due date in ISO format (YYYY-MM-DD). "
-    "period is the billing period as YYYY-MM when present. "
-    "currency is the ISO code when identifiable. "
-    "confidence is your confidence from 0 to 1."
+    "For an ordinary single bill, set installments to null; amount is the total "
+    "amount due as a decimal with cents (e.g. 87.30, no currency symbol), due_date "
+    "is the payment due date in ISO format (YYYY-MM-DD), period is the billing "
+    "period as YYYY-MM when present, currency is the ISO code when identifiable, "
+    "and confidence is your confidence from 0 to 1. "
+    "If the document is a Buy Now Pay Later / Afterpay instalment list screenshot "
+    "(e.g. 'Your orders' or 'Upcoming payments' with multiple rows showing an "
+    "'n of 4' counter), DO NOT sum the rows into amount and DO NOT include header "
+    "totals ('Total you owe', 'Due in 15/30/60 days'). Instead populate "
+    "installments with one entry per complete visible row (skip partially cut-off "
+    "rows missing merchant, amount, or date), keeping each row's merchant verbatim, "
+    "instalment amount (strip 'Pay ' if shown), due_date string, and 'n of m' "
+    "counter (installment_number, total_installments, installment_label)."
 )
 
 
@@ -91,6 +147,15 @@ class ExtractedBill:
     due_date: date | None
     period: str | None
     confidence: float
+    raw_text: str | None = None
+
+
+@dataclass
+class ExtractedDocument:
+    """Result of extracting a document: either one bill or N BNPL instalments."""
+
+    bill: ExtractedBill | None = None
+    bnpl_installments: list[BnplInstallmentRow] = field(default_factory=list)
     raw_text: str | None = None
 
 
@@ -299,6 +364,113 @@ def extract_document(
     except LlmError as exc:
         logger.info("Primary vision parse failed (%s); trying two-phase", exc)
         return _extract_image_two_phase(image, config=config)
+
+
+def _parse_document_payload(
+    payload: dict[str, Any],
+    *,
+    raw_text: str | None = None,
+    reference_date: date | None = None,
+) -> ExtractedDocument:
+    bnpl_rows = parse_afterpay_installments_payload(
+        payload, reference_date=reference_date
+    )
+    if bnpl_rows:
+        return ExtractedDocument(
+            bill=None,
+            bnpl_installments=bnpl_rows,
+            raw_text=raw_text,
+        )
+    return ExtractedDocument(
+        bill=_parse(payload, raw_text=raw_text),
+        bnpl_installments=[],
+        raw_text=raw_text,
+    )
+
+
+def extract_items_from_text(
+    text: str, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedDocument:
+    bnpl_rows = parse_afterpay_orders_text(text, reference_date=reference_date)
+    if bnpl_rows:
+        return ExtractedDocument(
+            bill=None,
+            bnpl_installments=bnpl_rows,
+            raw_text=text,
+        )
+    prompt, schema = _prompt_and_schema(config.model, document_text=text)
+    payload = generate_json(
+        config=config,
+        prompt=prompt,
+        schema=schema,
+    )
+    return _parse_document_payload(
+        payload, raw_text=text, reference_date=reference_date
+    )
+
+
+def extract_items_from_image(
+    image: bytes, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedDocument:
+    encoded = base64.b64encode(image).decode()
+    prompt, schema = _prompt_and_schema(config.model)
+    payload = generate_json(
+        config=config,
+        prompt=prompt,
+        images=[encoded],
+        schema=schema,
+    )
+    return _parse_document_payload(payload, reference_date=reference_date)
+
+
+def _extract_items_two_phase(
+    image: bytes, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedDocument:
+    """OCR with the vision model, then parse BNPL list or single bill from text."""
+    encoded = base64.b64encode(image).decode()
+    text = generate_text(
+        config=config,
+        prompt="Extract all text from this document, preserving layout order.",
+        images=[encoded],
+    )
+    if not text.strip():
+        raise LlmError("OCR model returned no text")
+    return extract_items_from_text(text, config=config, reference_date=reference_date)
+
+
+def extract_document_items(
+    data: bytes,
+    *,
+    config: LlmConfig,
+    content_type: str | None = None,
+    filename: str | None = None,
+    reference_date: date | None = None,
+) -> ExtractedDocument:
+    """Extract either a single bill or a BNPL instalment list from a document."""
+    is_pdf = (content_type == "application/pdf") or (filename or "").lower().endswith(
+        ".pdf"
+    )
+    if is_pdf:
+        text = pdf_text(data)
+        if len(text) >= 40:
+            return extract_items_from_text(
+                text, config=config, reference_date=reference_date
+            )
+        image = render_pdf_png(data)
+    else:
+        image = data
+
+    try:
+        return extract_items_from_image(
+            image, config=config, reference_date=reference_date
+        )
+    except LlmUnavailable:
+        raise
+    except LlmError as exc:
+        logger.info("Primary vision parse failed (%s); trying two-phase", exc)
+        return _extract_items_two_phase(
+            image, config=config, reference_date=reference_date
+        )
 
 
 BNPL_EXTRACTION_SCHEMA: dict[str, Any] = {

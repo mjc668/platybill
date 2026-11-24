@@ -324,6 +324,7 @@
         "estimateBadge": "Amount needed",
         "importBadge": "Imported",
         "afterpayBadge": "Afterpay",
+        "afterpayInstallmentProgress": "Instalment {label}",
         "afterpayInstallments": "{count} {interval} payments",
         "weekly": "weekly",
         "fortnightly": "fortnightly",

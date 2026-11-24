@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, JSON, String, Text
+from sqlalchemy import Date, ForeignKey, Index, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -32,16 +32,26 @@ class ImportStatus(str, Enum):
 class ImportDraft(Base):
     """An extracted bill awaiting user confirmation.
 
-    `source_ref` is unique: a file hash (upload/directory) or an IMAP
-    message-id + attachment index, so re-polls never duplicate drafts.
+    `source_ref` is unique across active drafts (pending/confirmed): a file
+    hash (upload/directory) or an IMAP message-id + attachment index, so
+    re-polls never duplicate live drafts while discarded or failed drafts do
+    not permanently suppress a later re-import.
     """
 
     __tablename__ = "import_drafts"
+    __table_args__ = (
+        Index(
+            "uq_import_drafts_active_source_ref",
+            "source_ref",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'confirmed')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     source: Mapped[ImportSource] = mapped_column(String(20), nullable=False)
-    source_ref: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    source_ref: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str | None] = mapped_column(String(255))
     provider: Mapped[str | None] = mapped_column(String(255))
     amount: Mapped[Decimal | None] = mapped_column(Money)

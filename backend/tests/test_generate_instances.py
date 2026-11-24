@@ -400,3 +400,204 @@ def test_weekly_generation_stops_at_cap(client_db):
     assert {
         due for due in all_dues if due.strftime("%Y-%m") in target_periods
     } == expected
+
+
+# ---------------------------------------------------------------------------
+# Month-anchored interval_count, derived anchor, one_off -> recurring, readability
+# ---------------------------------------------------------------------------
+
+
+def test_monthly_interval_3_anchored_at_sep_produces_dec_and_mar_only(client_db):
+    """monthly x 3 anchored at 2026-09 yields 2026-12 and 2027-03, never Oct/Nov."""
+    from app.models.bill import BillTemplate
+    from app.services.recurrence import backfill_template_instances
+
+    client, db = client_db
+    token = register_and_login(client, "gen_q_sep@test.com")
+    bill_id = _create_bill(
+        client,
+        token,
+        {
+            "name": "Water",
+            "frequency": "monthly",
+            "interval_count": 3,
+            "due_day": 11,
+            "amount": "574.13",
+            "amount_varies": True,
+        },
+    )
+    template = db.get(BillTemplate, bill_id)
+    assert template is not None
+    template.start_period = "2026-09"
+    db.commit()
+
+    created = backfill_template_instances(db, template, "2026-10", "2027-03")
+    assert created == 2
+    assert _periods_in_db(db, bill_id) == {"2026-12", "2027-03"}
+    dues = {
+        row.due_date
+        for row in db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill_id)
+    }
+    assert dues == {date(2026, 12, 11), date(2027, 3, 11)}
+
+
+def test_monthly_interval_3_without_start_period_derives_anchor_from_latest_instance(
+    client_db,
+):
+    """When start_period is None, anchor derives from the most recent existing instance."""
+    from app.models.bill import BillTemplate
+    from app.services.recurrence import generate_future_instances
+
+    client, db = client_db
+    token = register_and_login(client, "gen_q_derived@test.com")
+    bill_id = _create_bill(
+        client,
+        token,
+        {
+            "name": "Water",
+            "frequency": "monthly",
+            "interval_count": 3,
+            "due_day": 11,
+            "amount": "574.13",
+            "amount_varies": True,
+        },
+    )
+    template = db.get(BillTemplate, bill_id)
+    assert template is not None
+    # Simulate a template with no explicit start_period whose created_at is Nov 2026,
+    # while its most recent existing instance was 11 Sep 2026.
+    template.start_period = None
+    template.created_at = datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+    db.add(
+        PaymentInstance(
+            bill_id=bill_id,
+            period="2026-09",
+            due_date=date(2026, 9, 11),
+            amount=Decimal("574.13"),
+            amount_estimated=False,
+            status=PaymentStatus.paid,
+        )
+    )
+    db.commit()
+
+    created, count = generate_future_instances(
+        db,
+        template.user_id,
+        months=4,
+        bill_ids=[bill_id],
+        today=date(2026, 11, 24),
+    )
+    assert count == 1
+    assert created == 2
+    assert _periods_in_db(db, bill_id) == {"2026-09", "2026-12", "2027-03"}
+
+
+def test_patch_one_off_to_recurring_backfills_current_period(client_db):
+    """Converting a one_off template to recurring backfills the current period."""
+    client, db = client_db
+    token = register_and_login(client, "gen_oneoff_conv@test.com")
+    current = _current_month()
+    bill_id = _create_bill(
+        client,
+        token,
+        {
+            "name": "Water",
+            "frequency": "one_off",
+            "due_day": 11,
+            "amount": "574.13",
+        },
+    )
+    assert _periods_in_db(db, bill_id) == set()
+
+    r = client.patch(
+        f"/bills/{bill_id}",
+        json={"frequency": "monthly", "interval_count": 3},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    assert _periods_in_db(db, bill_id) == {current}
+
+
+def test_variable_bill_generated_instances_are_readable_and_match_created_count(
+    client_db,
+):
+    """Generated amount_varies instances are readable and count matches `created`."""
+    from app.models.bill import BillTemplate
+
+    client, db = client_db
+    token = register_and_login(client, "gen_var_read@test.com")
+    current = _current_month()
+    anchor = _shift(current, -2)  # so +1 and +4 are active for monthly x 3
+    bill_id = _create_bill(
+        client,
+        token,
+        {
+            "name": "Water",
+            "frequency": "monthly",
+            "interval_count": 3,
+            "due_day": 11,
+            "amount": "574.13",
+            "amount_varies": True,
+        },
+    )
+    # Re-anchor via PATCH start_period
+    patch_r = client.patch(
+        f"/bills/{bill_id}",
+        json={"start_period": anchor},
+        headers=auth(token),
+    )
+    assert patch_r.status_code == 200, patch_r.text
+    assert patch_r.json()["start_period"] == anchor
+
+    # Remove any instance created during POST/PATCH outside our target window
+    db.query(PaymentInstance).filter(PaymentInstance.bill_id == bill_id).delete()
+    db.commit()
+
+    r = _generate(client, token, months=4, bill_ids=[bill_id])
+    assert r.status_code == 200, r.text
+    created = r.json()["created"]
+    assert created == 2
+
+    # Repeat call is idempotent
+    r2 = _generate(client, token, months=4, bill_ids=[bill_id])
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["created"] == 0
+
+    # Re-read every generated month via GET /bills/payments?include_estimated=true
+    readable: list[dict] = []
+    for offset in range(1, 5):
+        month = _shift(current, offset)
+        resp = client.get(
+            f"/bills/payments?month={month}&include_estimated=true",
+            headers=auth(token),
+        )
+        assert resp.status_code == 200, resp.text
+        readable.extend(row for row in resp.json() if row["bill_id"] == bill_id)
+
+    assert len(readable) == created
+    assert {row["period"] for row in readable} == {
+        _shift(current, 1),
+        _shift(current, 4),
+    }
+    assert all(row["amount_estimated"] is True for row in readable)
+
+    # Also readable via needs-confirmation?include_future=true
+    future_queue = client.get(
+        "/bills/payments/needs-confirmation?include_future=true",
+        headers=auth(token),
+    )
+    assert future_queue.status_code == 200, future_queue.text
+    future_items = [row for row in future_queue.json() if row["bill_id"] == bill_id]
+    assert len(future_items) == created
+    assert {row["period"] for row in future_items} == {
+        _shift(current, 1),
+        _shift(current, 4),
+    }
+
+    # Default (no flag) preserves FR-018 behavior: unconfirmed estimates stay out
+    default_list = client.get(
+        f"/bills/payments?month={_shift(current, 1)}",
+        headers=auth(token),
+    ).json()
+    assert [row for row in default_list if row["bill_id"] == bill_id] == []
+    assert db.get(BillTemplate, bill_id) is not None

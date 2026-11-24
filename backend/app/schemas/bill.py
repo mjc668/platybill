@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     computed_field,
     field_validator,
@@ -60,6 +61,8 @@ class BillTemplateCreate(BaseModel):
 
 
 class BillTemplateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(None, max_length=255)
     category_id: int | None = None  # preferred
     category: str | None = None  # legacy default-key string, resolved server-side
@@ -73,9 +76,15 @@ class BillTemplateUpdate(BaseModel):
     currency: str | None = Field(None, pattern=_CURRENCY_PATTERN.pattern)
     due_day: int | None = Field(None, ge=1, le=31)
     due_month: int | None = Field(None, ge=1, le=12)  # month for annual/one_off
+    start_period: str | None = None
     notes: str | None = Field(None, max_length=5000)
     is_paused: bool | None = None
     recreate_deleted_future: bool = False  # transient control flag — not persisted
+
+    @field_validator("start_period")
+    @classmethod
+    def validate_start_period(cls, v: str | None) -> str | None:
+        return _validate_optional_period(v)
 
 
 class BillTemplateOut(BaseModel):

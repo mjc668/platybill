@@ -36,7 +36,7 @@ from app.schemas.stats import (
     UpcomingWindow,
 )
 from app.services.categories import category_label
-from app.services.recurrence import _occurrences_in_period
+from app.services.recurrence import _occurrences_in_period, _resolve_start_period
 
 DEFAULT_CURRENCY = "PLN"
 ATTENTION_LIMIT = 10
@@ -221,10 +221,11 @@ def _forecast(
 
     totals = {period: Decimal("0") for period in periods}
     for template in templates:
+        anchor = _resolve_start_period(db, template)
         for period in periods:
             # Weekly months can hold several occurrences, so count dates.
             totals[period] += template.amount * len(
-                _occurrences_in_period(template, period)
+                _occurrences_in_period(template, period, anchor=anchor)
             )
 
     return [

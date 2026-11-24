@@ -26,6 +26,13 @@ class ImportDraftOut(BaseModel):
     processed_at: datetime | None
 
 
+class ImportUploadOut(ImportDraftOut):
+    """Upload response: backwards-compatible single-draft fields plus all created drafts."""
+
+    drafts: list[ImportDraftOut] = []
+    skipped_duplicates: int = 0
+
+
 class ImportDraftUpdate(BaseModel):
     provider: str | None = Field(None, max_length=255)
     amount: Decimal | None = Field(None, gt=0)
