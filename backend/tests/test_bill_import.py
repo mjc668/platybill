@@ -1060,6 +1060,46 @@ def test_match_bill_disambiguates_same_issuer_by_due_day(client_db):
     )
 
     extracted = ExtractedBill(
+# Email import robustness: MIME fallback, inline images, HTML body, re-import,
+# and visible failures
+# ---------------------------------------------------------------------------
+
+
+def test_email_accepts_pdf_sent_as_octet_stream_and_x_pdf(client_db):
+    """PDFs sent as application/octet-stream or application/x-pdf are accepted."""
+    from app.services.bill_extract import ExtractedBill
+
+    client, db = client_db
+    register_and_login(client, "imp_mime@test.com")
+    user = db.query(User).filter(User.email == "imp_mime@test.com").one()
+
+    pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
+
+    msg_octet = EmailMessage()
+    msg_octet["From"] = "enotice@council.example"
+    msg_octet["Message-ID"] = "<council-octet@example>"
+    msg_octet["Subject"] = "Water Notice"
+    msg_octet.set_content("See attached notice.")
+    msg_octet.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="octet-stream",
+        filename="water-notice.pdf",
+    )
+
+    msg_xpdf = EmailMessage()
+    msg_xpdf["From"] = "enotice@council.example"
+    msg_xpdf["Message-ID"] = "<council-xpdf@example>"
+    msg_xpdf["Subject"] = "Rates Notice"
+    msg_xpdf.set_content("See attached notice.")
+    msg_xpdf.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="x-pdf",
+        filename="notice-download",
+    )
+
+    fake_extracted = ExtractedBill(
         provider="Goulburn Mulwaree Council",
         amount=Decimal("574.13"),
         currency="AUD",
@@ -1243,3 +1283,239 @@ def test_upload_same_issuer_water_notice_lands_on_water_not_rates(client_db):
     assert draft["status"] == "pending"
     assert draft["matched_bill_id"] == water["id"]
     assert draft["matched_bill_name"] == "Goulburn Mulwaree Council Water"
+        confidence=0.9,
+        raw_text="Water Notice",
+    )
+    seen_types: list[str | None] = []
+
+    def fake_extract(data, *, config, content_type=None, filename=None):
+        seen_types.append(content_type)
+        return fake_extracted
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_import.extract_document", side_effect=fake_extract),
+    ):
+        drafts1, skipped1 = _message_drafts(db, user, msg_octet.as_bytes())
+        drafts2, skipped2 = _message_drafts(db, user, msg_xpdf.as_bytes())
+
+    assert len(drafts1) == 1 and skipped1 == 0
+    assert len(drafts2) == 1 and skipped2 == 0
+    assert seen_types == ["application/pdf", "application/pdf"]
+
+
+def test_email_ignores_inline_images_and_recovers_from_bad_attachment(client_db):
+    """Inline logos never count as attachments and bad parts don't abort the PDF."""
+    from email.mime.application import MIMEApplication
+    from email.mime.image import MIMEImage
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    from app.services.bill_extract import ExtractedBill
+    from app.services.llm import LlmError
+
+    client, db = client_db
+    register_and_login(client, "imp_inline@test.com")
+    user = db.query(User).filter(User.email == "imp_inline@test.com").one()
+
+    pdf_bytes = b"%PDF-1.4\nfake-pdf-body"
+
+    # Case A: inline logo BEFORE a real PDF attachment.
+    msg_with_pdf = MIMEMultipart("mixed")
+    msg_with_pdf["From"] = "enotice@council.example"
+    msg_with_pdf["Message-ID"] = "<inline-before-pdf@example>"
+    msg_with_pdf["Subject"] = "Council Water Bill"
+    logo = MIMEImage(PNG, _subtype="png")
+    logo.add_header("Content-Disposition", "inline", filename="logo.png")
+    logo.add_header("Content-ID", "<logo@council.example>")
+    msg_with_pdf.attach(logo)
+    # Also include an image with NO Content-Disposition (common in mailers)
+    bare_img = MIMEImage(PNG, _subtype="png")
+    msg_with_pdf.attach(bare_img)
+    pdf_part = MIMEApplication(pdf_bytes, _subtype="octet-stream")
+    pdf_part.add_header("Content-Disposition", "attachment", filename="water.pdf")
+    msg_with_pdf.attach(pdf_part)
+
+    fake_extracted = ExtractedBill(
+        provider="Goulburn Mulwaree Council",
+        amount=Decimal("574.13"),
+        currency="AUD",
+        due_date=date(2026, 12, 11),
+        period="2026-12",
+        confidence=0.9,
+        raw_text="Water Notice",
+    )
+
+    def reject_images(data, *, config, content_type=None, filename=None):
+        if content_type and content_type.startswith("image/"):
+            raise LlmError("logo should never be sent to LLM")
+        return fake_extracted
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_import.extract_document", side_effect=reject_images),
+    ):
+        drafts, skipped = _message_drafts(db, user, msg_with_pdf.as_bytes())
+    assert len(drafts) == 1
+    assert skipped == 0
+    assert drafts[0].filename == "water.pdf"
+
+    # Case B: inline logo + text body only (no real attachments) -> body fallback runs.
+    msg_logo_body = MIMEMultipart("related")
+    msg_logo_body["From"] = "enotice@council.example"
+    msg_logo_body["Message-ID"] = "<inline-body-fallback@example>"
+    msg_logo_body["Subject"] = "Bill Ready"
+    msg_logo_body.attach(MIMEText("Water bill $574.13 due 2026-12-11", "plain"))
+    logo2 = MIMEImage(PNG, _subtype="png")
+    logo2.add_header("Content-Disposition", "inline", filename="sig.png")
+    msg_logo_body.attach(logo2)
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=EXTRACTED),
+    ):
+        drafts_b, skipped_b = _message_drafts(db, user, msg_logo_body.as_bytes())
+    assert len(drafts_b) == 1
+    assert skipped_b == 0
+    assert drafts_b[0].source_ref == "email:<inline-body-fallback@example>:text"
+
+    # Case C: first real attachment raises LlmError; second PDF still succeeds.
+    msg_two = MIMEMultipart("mixed")
+    msg_two["From"] = "enotice@council.example"
+    msg_two["Message-ID"] = "<two-attachments@example>"
+    msg_two["Subject"] = "Two Attachments"
+    bad_img = MIMEImage(PNG, _subtype="png")
+    bad_img.add_header("Content-Disposition", "attachment", filename="banner.png")
+    msg_two.attach(bad_img)
+    good_pdf = MIMEApplication(pdf_bytes, _subtype="pdf")
+    good_pdf.add_header("Content-Disposition", "attachment", filename="invoice.pdf")
+    msg_two.attach(good_pdf)
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_import.extract_document", side_effect=reject_images),
+    ):
+        drafts_c, skipped_c = _message_drafts(db, user, msg_two.as_bytes())
+    assert len(drafts_c) == 1
+    assert skipped_c == 0
+    assert drafts_c[0].filename == "invoice.pdf"
+
+
+def test_email_html_only_falls_back_to_text_extraction(client_db):
+    """HTML-only non-Afterpay emails strip HTML and extract via text fallback."""
+    client, db = client_db
+    register_and_login(client, "imp_html@test.com")
+    user = db.query(User).filter(User.email == "imp_html@test.com").one()
+
+    msg = EmailMessage()
+    msg["From"] = "billing@council.example"
+    msg["Message-ID"] = "<html-only-1@example>"
+    msg["Subject"] = "Your Council Water Notice"
+    msg.set_content(
+        "<html><head><style>.hidden{display:none}</style></head>"
+        "<body><h1>Goulburn Mulwaree Council</h1>"
+        "<p>Amount Due: $574.13</p><p>Due Date: 11 Dec 2026</p></body></html>",
+        subtype="html",
+    )
+
+    captured: list[str] = []
+
+    def fake_extract_text(text, *, config):
+        captured.append(text)
+        from app.services.bill_extract import ExtractedBill
+
+        return ExtractedBill(
+            provider="Goulburn Mulwaree Council",
+            amount=Decimal("574.13"),
+            currency="AUD",
+            due_date=date(2026, 12, 11),
+            period="2026-12",
+            confidence=0.9,
+            raw_text=text,
+        )
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch(
+            "app.services.bill_import.extract_from_text", side_effect=fake_extract_text
+        ),
+    ):
+        drafts, skipped = _message_drafts(db, user, msg.as_bytes())
+
+    assert len(drafts) == 1
+    assert skipped == 0
+    assert "Goulburn Mulwaree Council" in captured[0]
+    assert "$574.13" in captured[0]
+    assert "display:none" not in captured[0]
+    assert "<p>" not in captured[0]
+
+
+def test_discarded_or_failed_source_ref_allows_reimport(client_db):
+    """Discarded or failed drafts never permanently suppress re-importing."""
+    client, db = client_db
+    token = register_and_login(client, "imp_reimport@test.com")
+    user = db.query(User).filter(User.email == "imp_reimport@test.com").one()
+
+    message = EmailMessage()
+    message["From"] = "billing@sydneywater.example"
+    message["Message-ID"] = "<reimport-1@example>"
+    message["Subject"] = "Water bill"
+    message.set_content("See attached.")
+    message.add_attachment(PNG, maintype="image", subtype="png", filename="bill.png")
+    raw = message.as_bytes()
+
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_extract.generate_json", return_value=EXTRACTED),
+    ):
+        first, _ = _message_drafts(db, user, raw)
+        assert len(first) == 1
+        # Pending still dedupes
+        dup, skipped = _message_drafts(db, user, raw)
+        assert dup == [] and skipped == 1
+
+        # Discard the draft -> re-import succeeds
+        r = client.post(f"/import/drafts/{first[0].id}/discard", headers=auth(token))
+        assert r.status_code == 204
+        second, skipped2 = _message_drafts(db, user, raw)
+        assert len(second) == 1 and skipped2 == 0
+        assert second[0].id != first[0].id
+
+        # Mark failed -> re-import also succeeds
+        second[0].status = ImportStatus.failed
+        second[0].error = "temporary error"
+        db.commit()
+        third, skipped3 = _message_drafts(db, user, raw)
+        assert len(third) == 1 and skipped3 == 0
+        assert third[0].id != second[0].id
+
+
+def test_email_yielding_nothing_surfaces_visible_failure(client_db):
+    """An allowed-sender email with no usable attachment or text fails visibly."""
+    client, db = client_db
+    token = register_and_login(client, "imp_empty_fail@test.com")
+    user = db.query(User).filter(User.email == "imp_empty_fail@test.com").one()
+
+    empty_msg = EmailMessage()
+    empty_msg["From"] = "enotice@council.example"
+    empty_msg["Message-ID"] = "<empty-msg@example>"
+    empty_msg["Subject"] = "Council eNotice"
+    empty_msg.add_attachment(
+        b"PK\x03\x04not-a-pdf",
+        maintype="application",
+        subtype="zip",
+        filename="archive.zip",
+    )
+
+    with pytest.raises(ValueError):
+        _message_drafts(db, user, empty_msg.as_bytes())
+
+    failed_drafts = client.get(
+        "/import/drafts?status=failed", headers=auth(token)
+    ).json()
+    assert len(failed_drafts) == 1
+    assert failed_drafts[0]["status"] == "failed"
+    assert failed_drafts[0]["error"]
+
+    status_resp = client.get("/import/status", headers=auth(token)).json()
+    assert status_resp["last_error"] == failed_drafts[0]["error"]

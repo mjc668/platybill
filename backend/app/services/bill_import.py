@@ -11,10 +11,12 @@ import email
 import hashlib
 import imaplib
 import logging
+import re
 from datetime import date, datetime, timezone
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parseaddr
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +43,146 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg"}
 ALLOWED_CONTENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
+_CONTENT_TYPE_ALIASES: dict[str, str] = {
+    "application/x-pdf": "application/pdf",
+    "application/acrobat": "application/pdf",
+    "application/vnd.pdf": "application/pdf",
+    "text/pdf": "application/pdf",
+    "image/jpg": "image/jpeg",
+}
+_SUFFIX_TO_CONTENT_TYPE: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+_ACTIVE_DRAFT_STATUSES = (ImportStatus.pending, ImportStatus.confirmed)
 MATCH_THRESHOLD = 0.5
 _IMAP_TIMEOUT_SECONDS = 30.0
+
+
+def _detect_document_content_type(
+    content_type: str | None, filename: str | None, payload: bytes
+) -> str | None:
+    """Resolve a supported document MIME type via header, alias, magic, or suffix."""
+    normalized = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized in ALLOWED_CONTENT_TYPES:
+        return normalized
+    if normalized in _CONTENT_TYPE_ALIASES:
+        return _CONTENT_TYPE_ALIASES[normalized]
+
+    # Magic bytes fallback (handles application/octet-stream and untyped parts).
+    if payload.lstrip()[:5] == b"%PDF-":
+        return "application/pdf"
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if payload.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+
+    # Filename suffix fallback.
+    if filename:
+        suffix = Path(filename).suffix.lower()
+        if suffix in _SUFFIX_TO_CONTENT_TYPE:
+            return _SUFFIX_TO_CONTENT_TYPE[suffix]
+    return None
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Strip HTML tags, skipping script/style blocks, preserving readable breaks."""
+
+    _SKIP_TAGS = {"script", "style", "head"}
+    _BLOCK_TAGS = {
+        "p",
+        "div",
+        "br",
+        "tr",
+        "li",
+        "td",
+        "th",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "section",
+        "article",
+        "header",
+        "footer",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lower = tag.lower()
+        if lower in self._SKIP_TAGS:
+            self._skip_depth += 1
+        elif self._skip_depth == 0 and lower in self._BLOCK_TAGS:
+            self._chunks.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        lower = tag.lower()
+        if lower in self._SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+        elif self._skip_depth == 0 and lower in self._BLOCK_TAGS:
+            self._chunks.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self._chunks.append(data)
+
+    def get_text(self) -> str:
+        raw = "".join(self._chunks)
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in raw.splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _html_to_text(raw_html: str) -> str:
+    parser = _HtmlTextExtractor()
+    parser.feed(raw_html)
+    parser.close()
+    return parser.get_text()
+
+
+def _has_active_draft(db: Session, source_ref: str) -> bool:
+    """True when an active (pending/confirmed) draft already exists for source_ref."""
+    return (
+        db.query(ImportDraft.id)
+        .filter(
+            ImportDraft.source_ref == source_ref,
+            ImportDraft.status.in_(_ACTIVE_DRAFT_STATUSES),
+        )
+        .first()
+        is not None
+    )
+
+
+def record_failed_draft(
+    db: Session,
+    *,
+    user_id: int,
+    source: ImportSource,
+    source_ref: str,
+    filename: str | None,
+    error: str,
+) -> ImportDraft:
+    """Persist a visible failed import record (does not block later re-imports)."""
+    draft = ImportDraft(
+        user_id=user_id,
+        source=source,
+        source_ref=source_ref,
+        filename=filename,
+        status=ImportStatus.failed,
+        error=error[:2000],
+        processed_at=_now(),
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return draft
 
 
 def _now() -> datetime:
@@ -199,11 +339,8 @@ def create_draft(
     extracted: ExtractedBill,
     meta: dict | None = None,
 ) -> ImportDraft | None:
-    """Insert a draft unless `source_ref` was already imported (any status)."""
-    existing = (
-        db.query(ImportDraft).filter(ImportDraft.source_ref == source_ref).first()
-    )
-    if existing is not None:
+    """Insert a draft unless an active (pending/confirmed) draft already exists."""
+    if _has_active_draft(db, source_ref):
         return None
     draft = ImportDraft(
         user_id=user_id,
@@ -245,10 +382,7 @@ def import_document(
             f"File exceeds IMPORT_MAX_FILE_MB ({settings.import_max_file_mb})"
         )
     source_ref = f"{source.value}:{_hash(data)}"
-    if (
-        db.query(ImportDraft).filter(ImportDraft.source_ref == source_ref).first()
-        is not None
-    ):
+    if _has_active_draft(db, source_ref):
         return None
     config = app_settings.llm_config(db)
     if config is None:
@@ -275,6 +409,8 @@ def import_text(
     filename: str | None,
     source: ImportSource,
 ) -> ImportDraft | None:
+    if _has_active_draft(db, source_ref):
+        return None
     config = app_settings.llm_config(db)
     if config is None:
         raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
@@ -528,50 +664,78 @@ def _message_drafts(
         return [], 0
 
     message_id = message.get("Message-ID") or _hash(raw)
+    subject = _decode_header(message.get("Subject"))
     drafts: list[ImportDraft] = []
     skipped = 0
     part_index = 0
     text_body: str | None = None
     html_body: str | None = None
     had_attachment = False
+    errors: list[str] = []
 
     for part in message.walk():
-        content_type = part.get_content_type()
-        disposition = (part.get("Content-Disposition") or "").lower()
-        if "attachment" in disposition or content_type in ALLOWED_CONTENT_TYPES:
-            payload = part.get_payload(decode=True)
-            if not isinstance(payload, bytes) or not payload:
-                continue
-            if content_type not in ALLOWED_CONTENT_TYPES:
-                continue
-            had_attachment = True
-            filename = _decode_header(part.get_filename()) or f"email-part-{part_index}"
-            ref = f"email:{message_id}:{part_index}"
-            part_index += 1
+        if part.is_multipart():
+            continue
+        content_type = part.get_content_type().lower()
+        disp_type = (part.get_content_disposition() or "").lower()
+        raw_filename = _decode_header(part.get_filename()) or None
+
+        if disp_type != "attachment" and content_type == "text/plain":
+            if text_body is None:
+                payload = part.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    text_body = payload.decode(
+                        part.get_content_charset() or "utf-8", "replace"
+                    )
+            continue
+        if disp_type != "attachment" and content_type == "text/html":
+            if html_body is None:
+                payload = part.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    html_body = payload.decode(
+                        part.get_content_charset() or "utf-8", "replace"
+                    )
+            continue
+
+        payload = part.get_payload(decode=True)
+        if not isinstance(payload, bytes) or not payload:
+            continue
+
+        detected_type = _detect_document_content_type(
+            content_type, raw_filename, payload
+        )
+        if detected_type is None:
+            continue
+
+        # Inline or un-dispositioned images (logos, signatures) are never bill attachments.
+        if detected_type.startswith("image/") and disp_type != "attachment":
+            continue
+
+        had_attachment = True
+        filename = raw_filename or f"email-part-{part_index}"
+        ref = f"email:{message_id}:{part_index}"
+        part_index += 1
+        try:
             draft = _import_email_document(
-                db, user, payload, filename, content_type, ref
+                db, user, payload, filename, detected_type, ref
             )
-            if draft is None:
-                skipped += 1
-            else:
-                drafts.append(draft)
-        elif content_type == "text/plain" and text_body is None:
-            payload = part.get_payload(decode=True)
-            if isinstance(payload, bytes):
-                text_body = payload.decode(
-                    part.get_content_charset() or "utf-8", "replace"
-                )
-        elif content_type == "text/html" and html_body is None:
-            payload = part.get_payload(decode=True)
-            if isinstance(payload, bytes):
-                html_body = payload.decode(
-                    part.get_content_charset() or "utf-8", "replace"
-                )
+        except Exception as exc:  # noqa: BLE001 — continue inspecting remaining parts
+            logger.warning(
+                "Email attachment import failed for %s (%s): %s",
+                filename,
+                message_id,
+                exc,
+            )
+            errors.append(f"{filename}: {exc}")
+            continue
+        if draft is None:
+            skipped += 1
+        else:
+            drafts.append(draft)
 
     # Afterpay / BNPL extraction when enabled
     if not had_attachment and app_settings.imap_afterpay_enabled(db):
         combined_text = (html_body or "") + "\n" + (text_body or "")
-        subject = message.get("Subject", "")
         if is_afterpay_email(sender, subject, combined_text):
             bnpl = parse_afterpay(html_body or "", text_body or "")
             if bnpl is None:
@@ -602,22 +766,48 @@ def _message_drafts(
                     return [], 1
                 return [draft], 0
 
-    # Only fall back to the body when the message carried no document at all;
-    # a deduped attachment must not spawn a second draft from the body text.
-    if not had_attachment and text_body and text_body.strip():
-        ref = f"email:{message_id}:text"
-        draft = import_text(
+    # Fall back to plain text, or stripped HTML text, when no document attachment existed.
+    if not had_attachment:
+        body_text = (
+            text_body.strip()
+            if text_body and text_body.strip()
+            else (_html_to_text(html_body) if html_body else "")
+        )
+        if body_text:
+            ref = f"email:{message_id}:text"
+            try:
+                draft = import_text(
+                    db,
+                    user_id=user.id,
+                    text=body_text,
+                    source_ref=ref,
+                    filename=None,
+                    source=ImportSource.email,
+                )
+            except Exception as exc:  # noqa: BLE001 — record visible failure
+                errors.append(str(exc))
+            else:
+                if draft is None:
+                    skipped += 1
+                else:
+                    drafts.append(draft)
+
+    if not drafts and skipped == 0:
+        reason = (
+            "; ".join(errors)
+            if errors
+            else "Email contained no supported bill attachment or extractable body text"
+        )
+        record_failed_draft(
             db,
             user_id=user.id,
-            text=text_body,
-            source_ref=ref,
-            filename=None,
             source=ImportSource.email,
+            source_ref=f"email:{message_id}:failed",
+            filename=subject or None,
+            error=reason,
         )
-        if draft is None:
-            skipped += 1
-        else:
-            drafts.append(draft)
+        raise ValueError(reason)
+
     return drafts, skipped
 
 
@@ -631,10 +821,7 @@ def _import_email_document(
 ) -> ImportDraft | None:
     if len(payload) > _max_bytes():
         raise ValueError("Attachment exceeds IMPORT_MAX_FILE_MB")
-    if (
-        db.query(ImportDraft).filter(ImportDraft.source_ref == source_ref).first()
-        is not None
-    ):
+    if _has_active_draft(db, source_ref):
         return None
     config = app_settings.llm_config(db)
     if config is None:
