@@ -685,10 +685,46 @@ def update_bill(
     effective_start_date = updates.get("start_date", bill.start_date)
     effective_max_occurrences = updates.get("max_occurrences", old_max_occurrences)
     if effective_frequency == BF.one_off:
+        if updates.get("amount_varies") is True:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="amount_varies cannot be enabled for one_off bills",
+            )
+        if "interval_count" in updates and updates["interval_count"] != 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="interval_count must be 1 for one_off bills",
+            )
+        if (
+            old_frequency == BF.one_off
+            and "max_occurrences" in updates
+            and updates["max_occurrences"] is not None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="max_occurrences is not supported for one_off bills",
+            )
         effective_interval = 1
         effective_max_occurrences = None  # one-off bills ignore the cap
         # One-off bills are single known charges — never usage-based.
         updates["amount_varies"] = False
+
+    if effective_frequency == BF.weekly:
+        if "due_day" in updates and updates["due_day"] is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="due_day is not supported for weekly bills; use start_date",
+            )
+        if due_month is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="due_month is not supported for weekly bills; use start_date",
+            )
+    elif "start_date" in updates and updates["start_date"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date is only supported for weekly bills; use due_month",
+        )
 
     error = validate_schedule(
         effective_frequency, effective_interval, effective_start_date
@@ -774,14 +810,24 @@ def update_bill(
             inst.amount_estimated = False
             recalculate_instance(inst, today=user_today(ws.actor.timezone))
 
-    # Recalculate start_period when due_month changes for annual/one_off
-    if due_month is not None and effective_frequency in (BF.annual, BF.one_off):
-        now = datetime.now(timezone.utc)
-        if effective_frequency == BF.annual:
-            year = now.year if due_month >= now.month else now.year + 1
-        else:
-            year = now.year
-        bill.start_period = f"{year:04d}-{due_month:02d}"
+    # Recalculate start_period when due_month is provided for month-anchored/one_off bills.
+    # Preserve the existing start_period year when the month is unchanged on the same frequency
+    # (e.g. full-form saves editing unrelated fields).
+    if due_month is not None and effective_frequency in (
+        BF.monthly,
+        BF.annual,
+        BF.one_off,
+    ):
+        existing_month = (
+            int(bill.start_period.split("-")[1]) if bill.start_period else None
+        )
+        if effective_frequency != old_frequency or existing_month != due_month:
+            now = datetime.now(timezone.utc)
+            if effective_frequency == BF.annual:
+                year = now.year if due_month >= now.month else now.year + 1
+            else:
+                year = now.year
+            bill.start_period = f"{year:04d}-{due_month:02d}"
 
     if effective_frequency == BF.weekly:
         if schedule_changed and bill.start_date is not None:
