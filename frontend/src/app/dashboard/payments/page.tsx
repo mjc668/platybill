@@ -273,7 +273,11 @@ function PaymentsPageInner() {
   const todayStr = getTodayStr();
 
   const activeCategories = sortCategories(
-    uniqueCategories(instances.map((inst) => inst.category)),
+    uniqueCategories(
+      instances
+        .map((inst) => inst.category)
+        .filter((cat): cat is NonNullable<typeof cat> => cat !== null),
+    ),
     locale,
     tRoot,
   );
@@ -289,7 +293,12 @@ function PaymentsPageInner() {
     if (statusFilter === "unpaid" && inst.status === "paid") return false;
     if (statusFilter === "overdue" && inst.status !== "overdue") return false;
     if (statusFilter === "paid" && inst.status !== "paid") return false;
-    if (categoryFilter !== "all" && categoryValue(inst.category) !== categoryFilter) return false;
+    if (
+      categoryFilter !== "all" &&
+      (!inst.category || categoryValue(inst.category) !== categoryFilter)
+    ) {
+      return false;
+    }
     if (searchQuery && !inst.bill_name.toLowerCase().includes(searchQuery)) return false;
     return true;
   });

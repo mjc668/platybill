@@ -114,7 +114,9 @@ def send_monthly_summary_for_user(db: Session, user: User, month: str) -> bool:
     paid_rows = []
     unpaid_rows = []
     for inst in instances:
-        name = inst.template.name if inst.template else f"bill#{inst.bill_id}"
+        name = inst.label or (
+            inst.template.name if inst.template else f"bill#{inst.bill_id}"
+        )
         currency = inst.template.currency if inst.template else "PLN"
         due_date = inst.due_date.isoformat() if inst.due_date else ""
         if inst.status == PaymentStatus.paid:
@@ -296,7 +298,8 @@ def send_upcoming_digest_for_user(
     upcoming_rows: list[dict[str, object]] = []
     for inst in instances:
         row = {
-            "name": inst.template.name if inst.template else f"bill#{inst.bill_id}",
+            "name": inst.label
+            or (inst.template.name if inst.template else f"bill#{inst.bill_id}"),
             "due_date": inst.due_date.isoformat(),
             "amount": inst.amount,
             "currency": inst.template.currency if inst.template else "PLN",
@@ -543,7 +546,7 @@ def _send_and_flag(
     flag_attr: str,
     language: str,
 ) -> bool:
-    bill_name = (
+    bill_name = instance.label or (
         instance.template.name if instance.template else f"bill#{instance.bill_id}"
     )
     currency = instance.template.currency if instance.template else "PLN"

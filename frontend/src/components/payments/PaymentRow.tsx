@@ -170,9 +170,11 @@ export default function PaymentRow({ instance, onMarkPaid, onDelete, onReverted,
               {t("estimatedBadge")}
             </span>
           )}
-          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-            {categoryLabel(instance.category, tRoot)}
-          </span>
+          {instance.category && (
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+              {categoryLabel(instance.category, tRoot)}
+            </span>
+          )}
           {instance.preferred_account && (
             <span className="shrink-0 truncate max-w-28 sm:max-w-32 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
               {bankAccountLabel(instance.preferred_account)}

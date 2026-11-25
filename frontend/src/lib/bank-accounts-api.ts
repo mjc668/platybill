@@ -46,3 +46,39 @@ export function bankAccountLabel(account: BankAccount): string {
   const tail = account.iban.replace(/\s+/g, "").slice(-4);
   return tail ? `${account.name} ····${tail}` : account.name;
 }
+
+export interface AccountRequirementItem {
+  instance_id: number;
+  label: string;
+  due_date: string;
+  amount: string;
+  amount_estimated: boolean;
+  currency: string;
+}
+
+export interface AccountRequirementBucket {
+  account_id: number | null;
+  account_name: string;
+  total_due: string;
+  total_estimated: string;
+  items: AccountRequirementItem[];
+}
+
+export interface AccountRequirementsOut {
+  from: string;
+  to: string;
+  buckets: AccountRequirementBucket[];
+}
+
+export function fetchAccountRequirements(
+  fromDate?: string,
+  toDate?: string,
+): Promise<AccountRequirementsOut> {
+  const params = new URLSearchParams();
+  if (fromDate) params.set("from", fromDate);
+  if (toDate) params.set("to", toDate);
+  const qs = params.toString();
+  return apiFetch<AccountRequirementsOut>(
+    `/accounts/requirements${qs ? `?${qs}` : ""}`,
+  );
+}

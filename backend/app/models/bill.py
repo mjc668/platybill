@@ -112,9 +112,16 @@ class PaymentInstance(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    bill_id: Mapped[int] = mapped_column(
-        ForeignKey("bill_templates.id"), nullable=False
+    bill_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bill_templates.id"), nullable=True
     )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=True
+    )
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
     period: Mapped[str] = mapped_column(String(7), nullable=False)  # "YYYY-MM"
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Money, nullable=False)
@@ -150,7 +157,9 @@ class PaymentInstance(Base):
         UTCDateTime, default=lambda: datetime.now(timezone.utc)
     )
 
-    template: Mapped["BillTemplate"] = relationship(back_populates="instances")
+    template: Mapped["BillTemplate | None"] = relationship(back_populates="instances")
+    account: Mapped["BankAccount | None"] = relationship(back_populates="instances")
+    user: Mapped["User | None"] = relationship()
     payments: Mapped[list["Payment"]] = relationship(
         back_populates="instance",
         cascade="all, delete-orphan",

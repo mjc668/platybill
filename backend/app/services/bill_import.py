@@ -21,7 +21,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -30,6 +30,7 @@ from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, Paymen
 from app.models.import_draft import ImportDraft, ImportSource, ImportStatus
 from app.models.user import User
 from app.services import app_settings
+from app.services.bank_accounts import get_for_user as get_account_for_user
 from app.services.afterpay_parser import (
     BnplInstallmentRow,
     is_afterpay_email,
@@ -414,10 +415,19 @@ def _is_duplicate_bnpl_instalment(
     # 2. Existing non-deleted payment instances with the same due_date and amount.
     existing_instances = (
         db.query(PaymentInstance, BillTemplate)
-        .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .outerjoin(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(
-            BillTemplate.user_id == user_id,
-            BillTemplate.is_deleted.is_(False),
+            or_(
+                and_(
+                    PaymentInstance.bill_id.is_not(None),
+                    BillTemplate.user_id == user_id,
+                    BillTemplate.is_deleted.is_(False),
+                ),
+                and_(
+                    PaymentInstance.bill_id.is_(None),
+                    PaymentInstance.user_id == user_id,
+                ),
+            ),
             PaymentInstance.is_deleted.is_(False),
             PaymentInstance.due_date == row.due_date,
             PaymentInstance.amount == row.amount,
@@ -427,9 +437,8 @@ def _is_duplicate_bnpl_instalment(
     for inst, bill in existing_instances:
         if matched_bill_id is not None and inst.bill_id == matched_bill_id:
             return True
-        if "afterpay" in bill.name.lower() and merchants_match(
-            provider_name, bill.name
-        ):
+        name = inst.label if inst.label else (bill.name if bill is not None else "")
+        if "afterpay" in name.lower() and merchants_match(provider_name, name):
             return True
 
     return False
@@ -684,23 +693,70 @@ def _target_instance(
 
 
 def confirm_draft(
-    db: Session, draft: ImportDraft, *, bill_id: int | None = None
+    db: Session,
+    draft: ImportDraft,
+    *,
+    bill_id: int | None = None,
+    account_id: int | None = None,
+    ad_hoc: bool = False,
+    label: str | None = None,
 ) -> dict[str, Any]:
-    """Apply a draft: set the instance amount, or create the period's instance."""
+    """Apply a draft: set the instance amount, create the period's instance, or create an ad-hoc instance."""
+    if draft.amount is None or draft.amount <= 0:
+        raise ValueError("Draft has no amount to confirm")
+
+    resolved_account_id: int | None = None
+    if account_id is not None:
+        resolved_account_id = get_account_for_user(db, draft.user_id, account_id).id
+
+    user = db.get(User, draft.user_id)
+    local_today = user_today(user.timezone if user else None)
+
+    if ad_hoc and bill_id is None:
+        resolved_label = (label or draft.provider or "").strip()
+        if not resolved_label:
+            raise ValueError("A label is required for an ad-hoc payment")
+        due_date = draft.due_date
+        if due_date is None:
+            raise ValueError("A due date is required for an ad-hoc payment")
+        period = due_date.strftime("%Y-%m")
+        ad_hoc_instance = PaymentInstance(
+            bill_id=None,
+            user_id=draft.user_id,
+            account_id=resolved_account_id,
+            label=resolved_label,
+            period=period,
+            due_date=due_date,
+            amount=draft.amount,
+            amount_estimated=False,
+            status=PaymentStatus.upcoming,
+        )
+        db.add(ad_hoc_instance)
+        db.flush()
+        recalculate_instance(ad_hoc_instance, today=local_today)
+        draft.matched_bill_id = None
+        draft.status = ImportStatus.confirmed
+        draft.processed_at = _now()
+        db.commit()
+        db.refresh(ad_hoc_instance)
+        db.refresh(draft)
+        return {
+            "draft_id": draft.id,
+            "bill_id": None,
+            "instance_id": ad_hoc_instance.id,
+            "created_instance": True,
+        }
+
     target_bill_id = bill_id if bill_id is not None else draft.matched_bill_id
     if target_bill_id is None:
         raise ValueError("No bill selected for this draft")
     bill = db.get(BillTemplate, target_bill_id)
     if bill is None or bill.user_id != draft.user_id or bill.is_deleted:
         raise ValueError("Bill not found")
-    if draft.amount is None or draft.amount <= 0:
-        raise ValueError("Draft has no amount to confirm")
 
     # App-wide invariant: an instance's period is its due date's month.
     # The document's billing period can disagree with the due date (e.g. an
     # August usage period billed on 15 October), so the due date wins.
-    user = db.get(User, draft.user_id)
-    local_today = user_today(user.timezone if user else None)
     period = (
         draft.due_date.strftime("%Y-%m")
         if draft.due_date
@@ -743,6 +799,8 @@ def confirm_draft(
         else:
             instance = PaymentInstance(
                 bill_id=bill.id,
+                user_id=bill.user_id,
+                account_id=resolved_account_id,
                 period=period,
                 due_date=due_date,
                 amount=draft.amount,
@@ -757,6 +815,8 @@ def confirm_draft(
 
     instance.amount = draft.amount
     instance.amount_estimated = False
+    if resolved_account_id is not None:
+        instance.account_id = resolved_account_id
     recalculate_instance(instance)
 
     draft.matched_bill_id = bill.id

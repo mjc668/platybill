@@ -1,4 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _MAX_NAME_LENGTH = 100
 _MAX_IBAN_LENGTH = 34
@@ -71,3 +74,28 @@ class BankAccountUpdate(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+
+class AccountRequirementItem(BaseModel):
+    instance_id: int
+    label: str
+    due_date: date
+    amount: Decimal
+    amount_estimated: bool
+    currency: str
+
+
+class AccountRequirementBucket(BaseModel):
+    account_id: int | None
+    account_name: str
+    total_due: Decimal
+    total_estimated: Decimal
+    items: list[AccountRequirementItem]
+
+
+class AccountRequirementsOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: date = Field(serialization_alias="from", validation_alias="from")
+    to_date: date = Field(serialization_alias="to", validation_alias="to")
+    buckets: list[AccountRequirementBucket]

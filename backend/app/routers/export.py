@@ -8,6 +8,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
@@ -80,6 +81,8 @@ def export_xlsx(
     language = ws.actor.language_preference
     by_month: dict[int, list[dict]] = {m: [] for m in range(1, 13)}
     for i in instances:
+        if i.template is None:
+            continue
         month = int(i.period[5:7])
         by_month[month].append(
             {
@@ -138,15 +141,25 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
         .all()
     )
     template_ids = [t.id for t in templates]
+    ownership_clause = (
+        or_(
+            PaymentInstance.bill_id.in_(template_ids),
+            and_(
+                PaymentInstance.bill_id.is_(None),
+                PaymentInstance.user_id == user_id,
+            ),
+        )
+        if template_ids
+        else and_(
+            PaymentInstance.bill_id.is_(None),
+            PaymentInstance.user_id == user_id,
+        )
+    )
     instances = (
         db.query(PaymentInstance)
-        .filter(
-            PaymentInstance.bill_id.in_(template_ids),
-            PaymentInstance.is_deleted.is_(False),
-        )
+        .options(selectinload(PaymentInstance.account))
+        .filter(PaymentInstance.is_deleted.is_(False), ownership_clause)
         .all()
-        if template_ids
-        else []
     )
     instance_ids = [i.id for i in instances]
     payments = (
@@ -188,6 +201,8 @@ def _build_backup_arrays(db: Session, user_id: int) -> dict:
             {
                 "id": i.id,
                 "bill_id": i.bill_id,
+                "label": i.label,
+                "bank_account": i.account.name if i.account else None,
                 "period": i.period,
                 "due_date": i.due_date.isoformat(),
                 "amount": float(i.amount),
@@ -295,20 +310,28 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
         t.id
         for t in db.query(BillTemplate.id).filter(BillTemplate.user_id == user_id).all()
     ]
+    existing_instance_filters = [
+        and_(
+            PaymentInstance.bill_id.is_(None),
+            PaymentInstance.user_id == user_id,
+        )
+    ]
     if existing_ids:
-        existing_instance_ids = [
-            row.id
-            for row in db.query(PaymentInstance.id)
-            .filter(PaymentInstance.bill_id.in_(existing_ids))
-            .all()
-        ]
-        if existing_instance_ids:
-            db.query(Payment).filter(
-                Payment.instance_id.in_(existing_instance_ids)
-            ).delete(synchronize_session=False)
+        existing_instance_filters.append(PaymentInstance.bill_id.in_(existing_ids))
+    existing_instance_ids = [
+        row.id
+        for row in db.query(PaymentInstance.id)
+        .filter(or_(*existing_instance_filters))
+        .all()
+    ]
+    if existing_instance_ids:
+        db.query(Payment).filter(Payment.instance_id.in_(existing_instance_ids)).delete(
+            synchronize_session=False
+        )
         db.query(PaymentInstance).filter(
-            PaymentInstance.bill_id.in_(existing_ids)
+            PaymentInstance.id.in_(existing_instance_ids)
         ).delete(synchronize_session=False)
+    if existing_ids:
         db.query(BillTemplate).filter(BillTemplate.user_id == user_id).delete(
             synchronize_session=False
         )
@@ -354,8 +377,14 @@ def _apply_backup(db: Session, user_id: int, backup: BackupPayload) -> tuple[int
 
     instance_map: dict[int, int] = {}
     for bi in backup.payment_instances:
+        if bi.bank_account not in account_ids:
+            account = resolve_account_backup_value(db, user_id, bi.bank_account)
+            account_ids[bi.bank_account] = account.id if account else None
         instance_obj = PaymentInstance(
-            bill_id=id_map[bi.bill_id],
+            bill_id=id_map[bi.bill_id] if bi.bill_id is not None else None,
+            user_id=user_id,
+            account_id=account_ids[bi.bank_account],
+            label=bi.label,
             period=bi.period,
             due_date=date.fromisoformat(bi.due_date),
             amount=Decimal(str(bi.amount)),

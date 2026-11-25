@@ -44,11 +44,14 @@ class ImportDraftUpdate(BaseModel):
 
 class ImportConfirmIn(BaseModel):
     bill_id: int | None = None
+    account_id: int | None = None
+    ad_hoc: bool = False
+    label: str | None = Field(None, max_length=255)
 
 
 class ImportConfirmOut(BaseModel):
     draft_id: int
-    bill_id: int
+    bill_id: int | None
     instance_id: int
     created_instance: bool
 

@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CreditCard, LayoutDashboard, Receipt, Settings } from "lucide-react";
+import { CreditCard, Landmark, LayoutDashboard, Receipt, Settings } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 interface BottomNavItem {
   href: string;
-  labelKey: "dashboard" | "payments" | "bills" | "settings";
+  labelKey: "dashboard" | "payments" | "accounts" | "bills" | "settings";
   icon: typeof LayoutDashboard;
   exact: boolean;
 }
@@ -15,6 +15,7 @@ interface BottomNavItem {
 const ITEMS: BottomNavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/payments", labelKey: "payments", icon: CreditCard, exact: false },
+  { href: "/dashboard/accounts", labelKey: "accounts", icon: Landmark, exact: false },
   { href: "/dashboard/bills", labelKey: "bills", icon: Receipt, exact: true },
   { href: "/dashboard/settings", labelKey: "settings", icon: Settings, exact: false },
 ];
@@ -29,7 +30,7 @@ export default function BottomNav() {
       aria-label="Mobile navigation"
       className="mobile-nav-only fixed bottom-0 inset-x-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 pb-safe"
     >
-      <div className="grid grid-cols-4 h-14">
+      <div className="grid grid-cols-5 h-14">
         {ITEMS.map(({ href, labelKey, icon: Icon, exact }) => {
           const active = pathname === href || (!exact && pathname.startsWith(href + "/"));
           return (

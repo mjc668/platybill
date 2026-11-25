@@ -69,7 +69,7 @@ export interface TestOllamaOut {
 
 export interface ImportConfirmOut {
   draft_id: number;
-  bill_id: number;
+  bill_id: number | null;
   instance_id: number;
   created_instance: boolean;
 }
@@ -155,10 +155,20 @@ export function updateImportDraft(
 export function confirmImportDraft(
   id: number,
   billId?: number | null,
+  options?: { accountId?: number | null; adHoc?: boolean; label?: string | null },
 ): Promise<ImportConfirmOut> {
+  const payload: {
+    bill_id: number | null;
+    account_id?: number | null;
+    ad_hoc?: boolean;
+    label?: string | null;
+  } = { bill_id: billId ?? null };
+  if (options?.accountId !== undefined) payload.account_id = options.accountId;
+  if (options?.adHoc) payload.ad_hoc = true;
+  if (options?.label !== undefined) payload.label = options.label;
   return apiFetch<ImportConfirmOut>(`/import/drafts/${id}/confirm`, {
     method: "POST",
-    body: JSON.stringify({ bill_id: billId ?? null }),
+    body: JSON.stringify(payload),
   });
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { Archive, Receipt, CreditCard, LayoutDashboard, LogOut, Settings } from "lucide-react";
+import { Archive, Receipt, CreditCard, Landmark, LayoutDashboard, LogOut, Settings } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/context/auth-context";
 import { fetchMe } from "@/lib/user-api";
@@ -14,6 +14,7 @@ import BottomNav from "@/components/navigation/BottomNav";
 const NAV_ITEMS = [
   { href: "/dashboard", labelKey: "dashboard" as const, icon: LayoutDashboard, exact: true },
   { href: "/dashboard/payments", labelKey: "payments" as const, icon: CreditCard, exact: false },
+  { href: "/dashboard/accounts", labelKey: "accounts" as const, icon: Landmark, exact: false },
   { href: "/dashboard/bills", labelKey: "bills" as const, icon: Receipt, exact: true },
   { href: "/dashboard/bills/archived", labelKey: "archived" as const, icon: Archive, exact: false },
   { href: "/dashboard/settings", labelKey: "settings" as const, icon: Settings, exact: false },
