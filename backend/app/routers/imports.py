@@ -28,6 +28,7 @@ from app.schemas.imports import (
     TestOllamaOut,
 )
 from app.services import app_settings
+from app.services.bank_accounts import BankAccountError
 from app.services.bill_import import (
     ALLOWED_CONTENT_TYPES,
     ALLOWED_SUFFIXES,
@@ -188,7 +189,16 @@ def confirm_import_draft(
     if draft.status != ImportStatus.pending:
         raise HTTPException(status_code=400, detail="Draft is no longer pending")
     try:
-        result = confirm_draft(db, draft, bill_id=body.bill_id)
+        result = confirm_draft(
+            db,
+            draft,
+            bill_id=body.bill_id,
+            account_id=body.account_id,
+            ad_hoc=body.ad_hoc,
+            label=body.label,
+        )
+    except BankAccountError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ImportConfirmOut(**result)

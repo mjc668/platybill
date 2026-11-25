@@ -136,7 +136,9 @@ class PaymentInstanceOut(BaseModel):
     model_config = {"from_attributes": True}
 
     id: int
-    bill_id: int
+    bill_id: int | None
+    label: str | None = None
+    account_id: int | None = None
     period: str
     due_date: date
     amount: Decimal
@@ -151,7 +153,7 @@ class PaymentInstanceOut(BaseModel):
     interval_count: int = 1
     max_occurrences: int | None = None
     start_date: date | None = None
-    category: CategoryOut
+    category: CategoryOut | None = None
     preferred_account: BankAccountOut | None = None
     email_sent_at: datetime | None
     payments: list[PaymentOut] = []
@@ -166,6 +168,14 @@ class PendingConfirmationOut(PaymentInstanceOut):
 
 class InstanceAmountUpdate(BaseModel):
     amount: Decimal = Field(gt=0)
+
+
+class PaymentInstanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal | None = Field(None, gt=0)
+    account_id: int | None = None
+    label: str | None = Field(None, max_length=255)
 
 
 class PaymentCreate(BaseModel):
@@ -283,7 +293,9 @@ class BackupInstance(BaseModel):
     # Intentionally excluded from backup: reminder_sent_2_days_before,
     # reminder_sent_on_day, email_sent_at — transient flags reset to False on restore.
     id: int
-    bill_id: int
+    bill_id: int | None
+    label: str | None = None
+    bank_account: str | None = None
     period: str
     due_date: str
     amount: Decimal

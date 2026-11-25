@@ -10,7 +10,7 @@ from app.core.database import Base
 from app.core.types import UTCDateTime
 
 if TYPE_CHECKING:
-    from app.models.bill import BillTemplate
+    from app.models.bill import BillTemplate, PaymentInstance
     from app.models.user import User
 
 
@@ -44,3 +44,4 @@ class BankAccount(Base):
 
     user: Mapped[User] = relationship(back_populates="bank_accounts")
     bills: Mapped[list[BillTemplate]] = relationship(back_populates="preferred_account")
+    instances: Mapped[list[PaymentInstance]] = relationship(back_populates="account")

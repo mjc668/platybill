@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.database import get_db
 from app.core.deps import WorkspaceContext, workspace_context
 from app.core.timezones import user_today
-from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
+from app.models.bill import BillFrequency, BillTemplate, PaymentInstance, PaymentStatus
 from app.models.payment import Payment
 from app.models.user import User
 from app.schemas.bill import (
@@ -22,11 +22,14 @@ from app.schemas.bill import (
     MarkPaidRequest,
     PaymentCreate,
     PaymentInstanceOut,
+    PaymentInstanceUpdate,
     PendingConfirmationOut,
 )
 from app.services.bank_accounts import (
     BankAccountError,
     get_for_user as get_account_for_user,
+    resolve_instance_account,
+    resolve_instance_label,
 )
 from app.services.categories import (
     CategoryError,
@@ -100,9 +103,14 @@ def _resolve_category(
 def _get_scoped_instance(
     db: Session, instance_id: int, owner_id: int
 ) -> PaymentInstance:
-    """Load an instance and enforce ownership through bill → template.user_id."""
+    """Load an instance and enforce ownership via template.user_id or instance.user_id."""
     instance = db.get(PaymentInstance, instance_id)
-    if not instance or instance.template.user_id != owner_id:
+    if not instance:
+        raise HTTPException(status_code=404, detail="Payment instance not found")
+    instance_owner_id = (
+        instance.template.user_id if instance.template is not None else instance.user_id
+    )
+    if instance_owner_id != owner_id:
         raise HTTPException(status_code=404, detail="Payment instance not found")
     return instance
 
@@ -112,10 +120,22 @@ def _to_out(
     *,
     override_status: PaymentStatus | None = None,
 ) -> PaymentInstanceOut:
+    template = inst.template
+    currency = (
+        template.currency
+        if template is not None
+        else (
+            inst.user.default_currency
+            if inst.user is not None and inst.user.default_currency
+            else "PLN"
+        )
+    )
     return PaymentInstanceOut.model_validate(
         {
             "id": inst.id,
             "bill_id": inst.bill_id,
+            "label": inst.label,
+            "account_id": inst.account_id,
             "period": inst.period,
             "due_date": inst.due_date,
             "amount": inst.amount,
@@ -124,14 +144,18 @@ def _to_out(
             "paid_at": inst.paid_at,
             "paid_amount": inst.paid_amount,
             "notes": inst.notes,
-            "bill_name": inst.template.name,
-            "currency": inst.template.currency,
-            "frequency": inst.template.frequency,
-            "interval_count": inst.template.interval_count,
-            "max_occurrences": inst.template.max_occurrences,
-            "start_date": inst.template.start_date,
-            "category": inst.template.category,
-            "preferred_account": inst.template.preferred_account,
+            "bill_name": resolve_instance_label(inst),
+            "currency": currency,
+            "frequency": (
+                template.frequency if template is not None else BillFrequency.one_off
+            ),
+            "interval_count": template.interval_count if template is not None else 1,
+            "max_occurrences": (
+                template.max_occurrences if template is not None else None
+            ),
+            "start_date": template.start_date if template is not None else None,
+            "category": template.category if template is not None else None,
+            "preferred_account": resolve_instance_account(inst),
             "email_sent_at": inst.email_sent_at,
             # Match the relationship's order_by even if the in-memory
             # collection was appended to before a reload.
@@ -322,15 +346,24 @@ def list_payments(
         scope = PaymentInstance.period == month
 
     filters = [
-        BillTemplate.user_id == ws.owner_id,
-        BillTemplate.is_deleted.is_(False),
-        # Archived bills are quiet: their untouched pending rows stay out
-        # of the list until the bill is unarchived. Rows with payment
-        # events (paid or partially paid) remain visible as history.
         or_(
-            BillTemplate.is_archived.is_(False),
-            PaymentInstance.status == PaymentStatus.paid,
-            PaymentInstance.payments.any(),
+            and_(
+                PaymentInstance.bill_id.is_not(None),
+                BillTemplate.user_id == ws.owner_id,
+                BillTemplate.is_deleted.is_(False),
+                # Archived bills are quiet: their untouched pending rows stay out
+                # of the list until the bill is unarchived. Rows with payment
+                # events (paid or partially paid) remain visible as history.
+                or_(
+                    BillTemplate.is_archived.is_(False),
+                    PaymentInstance.status == PaymentStatus.paid,
+                    PaymentInstance.payments.any(),
+                ),
+            ),
+            and_(
+                PaymentInstance.bill_id.is_(None),
+                PaymentInstance.user_id == ws.owner_id,
+            ),
         ),
         PaymentInstance.is_deleted.is_(False),
         scope,
@@ -343,13 +376,15 @@ def list_payments(
     instances = (
         db.query(PaymentInstance)
         .options(
+            selectinload(PaymentInstance.account),
+            selectinload(PaymentInstance.user),
             selectinload(PaymentInstance.template).selectinload(BillTemplate.category),
             selectinload(PaymentInstance.template).selectinload(
                 BillTemplate.preferred_account
             ),
             selectinload(PaymentInstance.payments),
         )
-        .join(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .outerjoin(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
         .filter(*filters)
         .order_by(PaymentInstance.due_date)
         .all()
@@ -389,7 +424,7 @@ def add_payment(
     db.commit()
 
     # auto-create next instance only on the transition to fully paid
-    if became_fully_paid and not template.is_paused:
+    if became_fully_paid and template is not None and not template.is_paused:
         generate_next_instance(db, template, paid_due_date)
 
     db.refresh(instance)
@@ -457,7 +492,7 @@ def mark_paid(
     db.commit()
 
     # auto-create next instance only on the transition to fully paid
-    if became_fully_paid and not template.is_paused:
+    if became_fully_paid and template is not None and not template.is_paused:
         generate_next_instance(db, template, paid_due_date)
 
     db.refresh(instance)
@@ -492,7 +527,7 @@ def delete_payment(
 
     instance.is_deleted = True
 
-    if delete_future:
+    if delete_future and instance.bill_id is not None:
         db.query(PaymentInstance).filter(
             PaymentInstance.bill_id == instance.bill_id,
             PaymentInstance.due_date > instance.due_date,
@@ -531,6 +566,7 @@ def needs_confirmation(
     instances = (
         db.query(PaymentInstance)
         .options(
+            selectinload(PaymentInstance.account),
             selectinload(PaymentInstance.template).selectinload(BillTemplate.category),
             selectinload(PaymentInstance.template).selectinload(
                 BillTemplate.preferred_account
@@ -545,10 +581,73 @@ def needs_confirmation(
     return [
         PendingConfirmationOut(
             **(_to_out(inst).model_dump()),
-            basis_amounts=confirmed_amounts(db, inst.template),
+            basis_amounts=(
+                confirmed_amounts(db, inst.template)
+                if inst.template is not None
+                else []
+            ),
         )
         for inst in instances
     ]
+
+
+@router.patch("/payments/{instance_id}", response_model=PaymentInstanceOut)
+def update_payment_instance(
+    instance_id: int,
+    body: PaymentInstanceUpdate,
+    db: Session = Depends(get_db),
+    ws: WorkspaceContext = Depends(workspace_context("payments:write")),
+):
+    """Update a payment instance's account override, amount, and/or label."""
+    instance = _get_scoped_instance(db, instance_id, ws.owner_id)
+    updates = body.model_dump(exclude_unset=True)
+
+    if "account_id" in updates:
+        account_id = updates["account_id"]
+        if account_id is None:
+            instance.account_id = None
+        else:
+            try:
+                account = get_account_for_user(
+                    db,
+                    ws.owner_id,
+                    account_id,
+                    allow_archived=account_id == instance.account_id,
+                )
+            except BankAccountError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code, detail=str(exc)
+                ) from exc
+            instance.account_id = account.id
+
+    if "label" in updates:
+        raw_label = updates["label"]
+        cleaned_label = raw_label.strip() if isinstance(raw_label, str) else None
+        if instance.bill_id is None and not cleaned_label:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="label is required for ad-hoc payments",
+            )
+        instance.label = cleaned_label or None
+
+    if "amount" in updates:
+        if updates["amount"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="amount must not be null",
+            )
+        if instance.status == PaymentStatus.paid:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change the amount of a paid instance",
+            )
+        instance.amount = updates["amount"]
+        instance.amount_estimated = False
+        recalculate_instance(instance, today=user_today(ws.actor.timezone))
+
+    db.commit()
+    db.refresh(instance)
+    return _to_out(instance)
 
 
 @router.patch("/payments/{instance_id}/amount", response_model=PaymentInstanceOut)

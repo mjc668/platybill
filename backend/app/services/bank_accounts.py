@@ -9,11 +9,46 @@ Nothing here commits — callers own the transaction.
 
 from __future__ import annotations
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from datetime import date
+from decimal import Decimal
+
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.bank_account import BankAccount
-from app.models.bill import BillTemplate
+from app.models.bill import BillTemplate, PaymentInstance, PaymentStatus
+from app.schemas.bank_account import (
+    AccountRequirementBucket,
+    AccountRequirementItem,
+    AccountRequirementsOut,
+)
+
+UNSPECIFIED_ACCOUNT_NAME = "Unspecified"
+_CENTS = Decimal("0.01")
+
+
+def resolve_instance_account(instance: PaymentInstance) -> BankAccount | None:
+    """Resolve effective bank account for a payment instance.
+
+    Precedence:
+      1. instance.account (when instance.account_id is set)
+      2. instance.template.preferred_account (when bill_id is set)
+      3. None (Unspecified)
+    """
+    if instance.account_id is not None:
+        return instance.account
+    if instance.template is not None:
+        return instance.template.preferred_account
+    return None
+
+
+def resolve_instance_label(instance: PaymentInstance) -> str:
+    """Display label for a payment instance (ad-hoc label or template name)."""
+    if instance.label:
+        return instance.label
+    if instance.template is not None:
+        return instance.template.name
+    return f"Payment #{instance.id}"
 
 
 class BankAccountError(Exception):
@@ -135,19 +170,138 @@ def update_account(
 
 
 def delete_account(db: Session, user_id: int, account_id: int) -> None:
-    """Hard-delete an unused account; refuse while any template references it."""
+    """Hard-delete an unused account; refuse while any template or payment references it."""
     account = get_for_user(db, user_id, account_id, allow_archived=True)
-    in_use = (
+    in_use_bill = (
         db.query(BillTemplate.id)
         .filter(BillTemplate.preferred_account_id == account.id)
         .first()
     )
-    if in_use is not None:
+    in_use_instance = (
+        db.query(PaymentInstance.id)
+        .filter(PaymentInstance.account_id == account.id)
+        .first()
+    )
+    if in_use_bill is not None or in_use_instance is not None:
         raise BankAccountInUseError(
-            "Bank account is used by existing bills; archive it instead"
+            "Bank account is used by existing bills or payments; archive it instead"
         )
     db.delete(account)
     db.flush()
+
+
+def get_account_requirements(
+    db: Session,
+    owner_id: int,
+    from_date: date,
+    to_date: date,
+    *,
+    default_currency: str | None = None,
+) -> AccountRequirementsOut:
+    """Aggregate unpaid, non-deleted payment instances by resolved bank account.
+
+    Includes both template-backed and ad-hoc (`bill_id IS NULL`) instances whose
+    `due_date` falls within `[from_date, to_date]` inclusive. Estimated amounts
+    are included in `total_due` and summed separately in `total_estimated`.
+    Empty accounts are omitted; an `Unspecified` bucket (`account_id=None`) is
+    appended when any matching instance has no resolvable account.
+    """
+    instances = (
+        db.query(PaymentInstance)
+        .options(
+            selectinload(PaymentInstance.account),
+            selectinload(PaymentInstance.template).selectinload(
+                BillTemplate.preferred_account
+            ),
+            selectinload(PaymentInstance.user),
+        )
+        .outerjoin(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
+        .filter(
+            or_(
+                and_(
+                    PaymentInstance.bill_id.is_not(None),
+                    BillTemplate.user_id == owner_id,
+                    BillTemplate.is_deleted.is_(False),
+                    or_(
+                        BillTemplate.is_archived.is_(False),
+                        PaymentInstance.payments.any(),
+                    ),
+                ),
+                and_(
+                    PaymentInstance.bill_id.is_(None),
+                    PaymentInstance.user_id == owner_id,
+                ),
+            ),
+            PaymentInstance.is_deleted.is_(False),
+            PaymentInstance.status != PaymentStatus.paid,
+            PaymentInstance.due_date >= from_date,
+            PaymentInstance.due_date <= to_date,
+        )
+        .order_by(PaymentInstance.due_date, PaymentInstance.id)
+        .all()
+    )
+
+    fallback_currency = default_currency or "PLN"
+    grouped: dict[int | None, tuple[str, list[AccountRequirementItem]]] = {}
+
+    for inst in instances:
+        account = resolve_instance_account(inst)
+        account_id = account.id if account is not None else None
+        account_name = account.name if account is not None else UNSPECIFIED_ACCOUNT_NAME
+
+        paid = inst.paid_amount or Decimal("0.00")
+        remaining = max(inst.amount - paid, Decimal("0.00")).quantize(_CENTS)
+        if inst.template is not None:
+            currency = inst.template.currency
+        elif inst.user is not None and inst.user.default_currency:
+            currency = inst.user.default_currency
+        else:
+            currency = fallback_currency
+
+        item = AccountRequirementItem(
+            instance_id=inst.id,
+            label=resolve_instance_label(inst),
+            due_date=inst.due_date,
+            amount=remaining,
+            amount_estimated=inst.amount_estimated,
+            currency=currency,
+        )
+        if account_id not in grouped:
+            grouped[account_id] = (account_name, [])
+        grouped[account_id][1].append(item)
+
+    named_keys = sorted(
+        (key for key in grouped if key is not None),
+        key=lambda key: (grouped[key][0].lower(), key),
+    )
+    ordered_keys: list[int | None] = list(named_keys)
+    if None in grouped:
+        ordered_keys.append(None)
+
+    buckets: list[AccountRequirementBucket] = []
+    for key in ordered_keys:
+        account_name, items = grouped[key]
+        total_due = sum((item.amount for item in items), Decimal("0.00")).quantize(
+            _CENTS
+        )
+        total_estimated = sum(
+            (item.amount for item in items if item.amount_estimated), Decimal("0.00")
+        ).quantize(_CENTS)
+        buckets.append(
+            AccountRequirementBucket(
+                account_id=key,
+                account_name=account_name,
+                total_due=total_due,
+                total_estimated=total_estimated,
+                items=items,
+            )
+        )
+
+    return AccountRequirementsOut(
+        from_date=from_date,
+        to_date=to_date,
+        buckets=buckets,
+    )
 
 
 def resolve_backup_value(

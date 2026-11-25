@@ -2,8 +2,9 @@
 
 All queries are scoped to one user and one currency (the user's primary
 currency, derived from their non-archived templates). Soft-deleted payment
-instances are excluded everywhere. Aggregation happens in SQL — rows are only
-loaded for the bounded attention list.
+instances and ad-hoc instances (`bill_id IS NULL`) are excluded everywhere
+a template is required. Aggregation happens in SQL — rows are only loaded
+for the bounded attention list.
 """
 
 from datetime import date, timedelta

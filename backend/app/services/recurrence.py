@@ -339,6 +339,7 @@ def backfill_template_instances(
         db.add(
             PaymentInstance(
                 bill_id=template.id,
+                user_id=template.user_id,
                 period=due_date.strftime("%Y-%m"),
                 due_date=due_date,
                 **(_new_instance_values(db, template)),
@@ -438,6 +439,7 @@ def ensure_current_period_instances(db: Session, period: str, user_id: int) -> N
             db.add(
                 PaymentInstance(
                     bill_id=template.id,
+                    user_id=template.user_id,
                     period=period,
                     due_date=due_date,
                     **(_new_instance_values(db, template)),
@@ -497,6 +499,7 @@ def generate_next_instance(
 
     instance = PaymentInstance(
         bill_id=template.id,
+        user_id=template.user_id,
         period=next_due_date.strftime("%Y-%m"),
         due_date=next_due_date,
         **(_new_instance_values(db, template)),
@@ -673,6 +676,7 @@ def cancel_archived_occurrences(
             db.add(
                 PaymentInstance(
                     bill_id=template.id,
+                    user_id=template.user_id,
                     period=due_date.strftime("%Y-%m"),
                     due_date=due_date,
                     amount=template.amount,
@@ -767,6 +771,7 @@ def seed_resumed_occurrences(
             continue
         instance = PaymentInstance(
             bill_id=template.id,
+            user_id=template.user_id,
             period=due_date.strftime("%Y-%m"),
             due_date=due_date,
             **(_new_instance_values(db, template)),

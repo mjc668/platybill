@@ -16,7 +16,9 @@ export interface PaymentEvent {
 
 export interface PaymentInstanceOut {
   id: number;
-  bill_id: number;
+  bill_id: number | null;
+  label?: string | null;
+  account_id?: number | null;
   period: string;
   due_date: string;
   amount: string;
@@ -31,7 +33,7 @@ export interface PaymentInstanceOut {
   interval_count: number;
   max_occurrences: number | null;
   start_date: string | null;
-  category: Category;
+  category: Category | null;
   preferred_account: BankAccount | null;
   email_sent_at: string | null;
   payments: PaymentEvent[];
@@ -57,6 +59,16 @@ export function confirmInstanceAmount(
   return apiFetch<PaymentInstanceOut>(`/bills/payments/${instanceId}/amount`, {
     method: "PATCH",
     body: JSON.stringify({ amount }),
+  });
+}
+
+export function updatePaymentInstance(
+  instanceId: number,
+  data: { amount?: string; account_id?: number | null; label?: string | null },
+): Promise<PaymentInstanceOut> {
+  return apiFetch<PaymentInstanceOut>(`/bills/payments/${instanceId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
   });
 }
 
