@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from html.parser import HTMLParser
@@ -40,9 +40,10 @@ class ExtractedBnpl:
     max_occurrences: int
     installments: list[InstallmentDetail]
     type: str = "afterpay"
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "type": self.type,
             "merchant": self.merchant,
             "order_id": self.order_id,
@@ -54,6 +55,9 @@ class ExtractedBnpl:
             "max_occurrences": self.max_occurrences,
             "installments": [i.to_dict() for i in self.installments],
         }
+        if self.warnings:
+            result["warnings"] = list(self.warnings)
+        return result
 
 
 class _AutomationIdParser(HTMLParser):
@@ -131,20 +135,27 @@ def _parse_date(text: str) -> date | None:
     return None
 
 
-def parse_afterpay(html_body: str, text_body: str = "") -> ExtractedBnpl | None:
+def parse_afterpay(
+    html_body: str,
+    text_body: str = "",
+    *,
+    reference_date: date | None = None,
+) -> ExtractedBnpl | None:
     """Extract Afterpay installment plan from HTML or plain-text body."""
     if html_body:
-        extracted = _parse_from_html(html_body)
+        extracted = _parse_from_html(html_body, reference_date=reference_date)
         if extracted is not None:
             return extracted
 
     if text_body:
-        return _parse_from_text(text_body)
+        return _parse_from_text(text_body, reference_date=reference_date)
 
     return None
 
 
-def _parse_from_html(html_content: str) -> ExtractedBnpl | None:
+def _parse_from_html(
+    html_content: str, *, reference_date: date | None = None
+) -> ExtractedBnpl | None:
     parser = _AutomationIdParser()
     try:
         parser.feed(html_content)
@@ -189,6 +200,7 @@ def _parse_from_html(html_content: str) -> ExtractedBnpl | None:
 
     # 3. Installments
     installments: list[InstallmentDetail] = []
+    warnings: list[str] = []
     for i in range(1, 10):
         amount_str = data.get(f"email-payment{i}-amount")
         date_str = data.get(f"email-payment{i}-date")
@@ -198,6 +210,12 @@ def _parse_from_html(html_content: str) -> ExtractedBnpl | None:
 
         amt = _parse_amount(amount_str)
         dt = _parse_date(date_str)
+        if dt is not None:
+            dt, warn = reconcile_date_weekday(
+                dt, date_str, reference_date=reference_date
+            )
+            if warn:
+                warnings.append(warn)
         if amt is not None and dt is not None:
             installments.append(
                 InstallmentDetail(
@@ -237,10 +255,13 @@ def _parse_from_html(html_content: str) -> ExtractedBnpl | None:
         max_occurrences=len(installments),
         installments=installments,
         type="afterpay",
+        warnings=warnings,
     )
 
 
-def _parse_from_text(text: str) -> ExtractedBnpl | None:
+def _parse_from_text(
+    text: str, *, reference_date: date | None = None
+) -> ExtractedBnpl | None:
     """Fallback parser for plain-text emails."""
     merchant_match = re.search(
         r"(?:Your order with|Retailer:)\s*([^\n\r]+?)(?:\s*is confirmed|\s*Afterpay|\n|$)",
@@ -258,6 +279,7 @@ def _parse_from_text(text: str) -> ExtractedBnpl | None:
 
     # Search for payments
     installments: list[InstallmentDetail] = []
+    warnings: list[str] = []
     payment_blocks = re.findall(
         r"(FIRST|SECOND|THIRD|FOURTH|\d+(?:st|nd|rd|th))\s+PAYMENT[\s\S]*?\$?(\d+\.\d{2})[\s\S]*?DUE DATE:\s*([A-Za-z]+,\s*\d{1,2}/\d{1,2}/\d{4}|\d{1,2}/\d{1,2}/\d{4})",
         text,
@@ -267,6 +289,12 @@ def _parse_from_text(text: str) -> ExtractedBnpl | None:
     for idx, (_, amount_str, date_str) in enumerate(payment_blocks, start=1):
         amt = _parse_amount(amount_str)
         dt = _parse_date(date_str)
+        if dt is not None:
+            dt, warn = reconcile_date_weekday(
+                dt, date_str, reference_date=reference_date
+            )
+            if warn:
+                warnings.append(warn)
         if amt and dt:
             installments.append(
                 InstallmentDetail(index=idx, amount=amt, due_date=dt, status=None)
@@ -301,6 +329,7 @@ def _parse_from_text(text: str) -> ExtractedBnpl | None:
         max_occurrences=len(installments),
         installments=installments,
         type="afterpay",
+        warnings=warnings,
     )
 
 
@@ -334,6 +363,126 @@ _MONTH_NAMES: dict[str, int] = {
     "dec": 12,
     "december": 12,
 }
+
+_WEEKDAY_NAMES: dict[str, int] = {
+    "mon": 0,
+    "monday": 0,
+    "tue": 1,
+    "tues": 1,
+    "tuesday": 1,
+    "wed": 2,
+    "weds": 2,
+    "wednesday": 2,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "thursday": 3,
+    "fri": 4,
+    "friday": 4,
+    "sat": 5,
+    "saturday": 5,
+    "sun": 6,
+    "sunday": 6,
+}
+
+_WD_TOKEN = (
+    r"\b("
+    r"Mon(?:day)?|Tue(?:s(?:day)?)?|Wed(?:s|nesday)?|"
+    r"Thu(?:r(?:s(?:day)?)?)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?"
+    r")\b"
+)
+_WD_TOKEN_RE = re.compile(_WD_TOKEN, re.IGNORECASE)
+_WD_DM_RE = re.compile(
+    _WD_TOKEN + r"\.?,?\s+(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})(?:,?\s+\d{4})?\b",
+    re.IGNORECASE,
+)
+_WD_MD_RE = re.compile(
+    _WD_TOKEN + r"\.?,?\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b",
+    re.IGNORECASE,
+)
+_WD_DMY_SLASH_RE = re.compile(
+    _WD_TOKEN + r"\.?,?\s+(\d{1,2})/(\d{1,2})(?:/\d{4})?\b",
+    re.IGNORECASE,
+)
+_WD_ISO_RE = re.compile(
+    _WD_TOKEN + r"\.?,?\s+\d{4}-(\d{1,2})-(\d{1,2})\b",
+    re.IGNORECASE,
+)
+
+
+def _find_weekday_mentions(
+    source_text: str, month: int, day: int
+) -> list[tuple[int, str]]:
+    """Find (weekday_index, raw_label) pairs in source_text matching (month, day)."""
+    matches: list[tuple[int, str]] = []
+    for m in _WD_DM_RE.finditer(source_text):
+        wd = _WEEKDAY_NAMES.get(m.group(1).lower())
+        m_month = _MONTH_NAMES.get(m.group(3).lower())
+        if wd is not None and m_month == month and int(m.group(2)) == day:
+            matches.append((wd, m.group(1)))
+    for m in _WD_MD_RE.finditer(source_text):
+        wd = _WEEKDAY_NAMES.get(m.group(1).lower())
+        m_month = _MONTH_NAMES.get(m.group(2).lower())
+        if wd is not None and m_month == month and int(m.group(3)) == day:
+            matches.append((wd, m.group(1)))
+    for m in _WD_DMY_SLASH_RE.finditer(source_text):
+        wd = _WEEKDAY_NAMES.get(m.group(1).lower())
+        if wd is not None and int(m.group(3)) == month and int(m.group(2)) == day:
+            matches.append((wd, m.group(1)))
+    for m in _WD_ISO_RE.finditer(source_text):
+        wd = _WEEKDAY_NAMES.get(m.group(1).lower())
+        if wd is not None and int(m.group(2)) == month and int(m.group(3)) == day:
+            matches.append((wd, m.group(1)))
+    return matches
+
+
+def reconcile_date_weekday(
+    parsed: date | None,
+    source_text: str | None,
+    *,
+    reference_date: date | None = None,
+) -> tuple[date | None, str | None]:
+    """Reconcile a parsed date against any weekday printed with it in source_text.
+
+    When source_text includes a weekday for the same (month, day) — e.g.
+    'Sun, 27 Dec' — and `parsed` falls on a different weekday, try `ref.year`
+    then `ref.year + 1` and pick the year whose weekday matches. If neither
+    matches, leave `parsed` unchanged and return a warning string (also logged).
+    """
+    if parsed is None or not source_text:
+        return parsed, None
+
+    mentions = _find_weekday_mentions(source_text, parsed.month, parsed.day)
+    if not mentions:
+        return parsed, None
+
+    if any(wd == parsed.weekday() for wd, _ in mentions):
+        return parsed, None
+
+    expected_wd, wd_label = mentions[0]
+    ref = reference_date or date.today()
+    for year in (ref.year, ref.year + 1):
+        try:
+            candidate = date(year, parsed.month, parsed.day)
+        except ValueError:
+            continue
+        if candidate.weekday() == expected_wd:
+            logger.info(
+                "Reconciled due_date year %s -> %s to match source weekday '%s'",
+                parsed.isoformat(),
+                candidate.isoformat(),
+                wd_label,
+            )
+            return candidate, None
+
+    warning = (
+        f"Parsed date {parsed.isoformat()} ({parsed.strftime('%a')}) does not "
+        f"match source weekday '{wd_label}' and could not be reconciled in "
+        f"{ref.year}-{ref.year + 1}"
+    )
+    logger.warning("%s", warning)
+    return parsed, warning
+
 
 _WEEKDAY_PREFIX = r"(?:\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+)?"
 _DMY_MONTH_YEAR_RE = re.compile(
@@ -392,6 +541,7 @@ class BnplInstallmentRow:
     installment_number: int
     total_installments: int
     currency: str = "AUD"
+    warnings: tuple[str, ...] = ()
 
     @property
     def installment_label(self) -> str:
@@ -402,7 +552,7 @@ class BnplInstallmentRow:
         return max(0, self.total_installments - self.installment_number)
 
     def to_meta(self) -> dict[str, Any]:
-        return {
+        meta: dict[str, Any] = {
             "type": "afterpay",
             "source_kind": "bnpl_list",
             "merchant": self.merchant,
@@ -413,6 +563,9 @@ class BnplInstallmentRow:
             "interval_count": 2,
             "max_occurrences": self.total_installments,
         }
+        if self.warnings:
+            meta["warnings"] = list(self.warnings)
+        return meta
 
 
 def _clean_merchant(value: str) -> str:
@@ -557,15 +710,15 @@ def _resolve_yearless_date(
     return candidate
 
 
-def parse_bnpl_date(
+def _parse_bnpl_date_checked(
     text: str,
     *,
     reference_date: date | None = None,
     explicit_year_hint: tuple[int, int] | None = None,
-) -> date | None:
-    """Parse Afterpay screenshot date strings such as 'Sun, 27 Dec' or '3 Jan, 2027'."""
+) -> tuple[date | None, str | None]:
+    """Parse an Afterpay date string and reconcile any weekday mismatch."""
     if not text or not text.strip():
-        return None
+        return None, None
 
     # Strip any leading "n of m •" counter prefix if embedded.
     cleaned = re.sub(
@@ -575,64 +728,90 @@ def parse_bnpl_date(
         flags=re.IGNORECASE,
     ).strip()
 
+    parsed: date | None = None
+
     # 1. Explicit numeric dates (YYYY-MM-DD, DD/MM/YYYY)
     numeric = _parse_date(cleaned)
     if numeric is not None:
-        return numeric
+        parsed = numeric
 
     # 2. Explicit month-name dates with year ('3 Jan, 2027', 'Jan 3, 2027')
-    m_dmy = _DMY_MONTH_YEAR_RE.search(cleaned)
-    if m_dmy:
-        day = int(m_dmy.group(1))
-        month = _MONTH_NAMES.get(m_dmy.group(2).lower())
-        year = int(m_dmy.group(3))
-        if month is not None:
-            try:
-                return date(year, month, day)
-            except ValueError:
-                return None
+    if parsed is None:
+        m_dmy = _DMY_MONTH_YEAR_RE.search(cleaned)
+        if m_dmy:
+            day = int(m_dmy.group(1))
+            month = _MONTH_NAMES.get(m_dmy.group(2).lower())
+            year = int(m_dmy.group(3))
+            if month is not None:
+                try:
+                    parsed = date(year, month, day)
+                except ValueError:
+                    return None, None
 
-    m_mdy = _MDY_MONTH_YEAR_RE.search(cleaned)
-    if m_mdy:
-        month = _MONTH_NAMES.get(m_mdy.group(1).lower())
-        day = int(m_mdy.group(2))
-        year = int(m_mdy.group(3))
-        if month is not None:
-            try:
-                return date(year, month, day)
-            except ValueError:
-                return None
+    if parsed is None:
+        m_mdy = _MDY_MONTH_YEAR_RE.search(cleaned)
+        if m_mdy:
+            month = _MONTH_NAMES.get(m_mdy.group(1).lower())
+            day = int(m_mdy.group(2))
+            year = int(m_mdy.group(3))
+            if month is not None:
+                try:
+                    parsed = date(year, month, day)
+                except ValueError:
+                    return None, None
 
     # 3. Yearless month-name dates ('Sun, 27 Dec', '27 Dec', 'Sun, Dec 27')
-    m_dm = _DM_NO_YEAR_RE.search(cleaned)
-    if m_dm:
-        day = int(m_dm.group(1))
-        month = _MONTH_NAMES.get(m_dm.group(2).lower())
-        if month is not None:
-            return _resolve_yearless_date(
-                month,
-                day,
-                reference_date=reference_date,
-                explicit_year_hint=explicit_year_hint,
-            )
+    if parsed is None:
+        m_dm = _DM_NO_YEAR_RE.search(cleaned)
+        if m_dm:
+            day = int(m_dm.group(1))
+            month = _MONTH_NAMES.get(m_dm.group(2).lower())
+            if month is not None:
+                parsed = _resolve_yearless_date(
+                    month,
+                    day,
+                    reference_date=reference_date,
+                    explicit_year_hint=explicit_year_hint,
+                )
 
-    m_md = _MD_NO_YEAR_RE.search(cleaned)
-    if m_md:
-        month = _MONTH_NAMES.get(m_md.group(1).lower())
-        day = int(m_md.group(2))
-        if month is not None:
-            return _resolve_yearless_date(
-                month,
-                day,
-                reference_date=reference_date,
-                explicit_year_hint=explicit_year_hint,
-            )
+    if parsed is None:
+        m_md = _MD_NO_YEAR_RE.search(cleaned)
+        if m_md:
+            month = _MONTH_NAMES.get(m_md.group(1).lower())
+            day = int(m_md.group(2))
+            if month is not None:
+                parsed = _resolve_yearless_date(
+                    month,
+                    day,
+                    reference_date=reference_date,
+                    explicit_year_hint=explicit_year_hint,
+                )
 
-    return None
+    if parsed is None:
+        return None, None
+    return reconcile_date_weekday(parsed, cleaned, reference_date=reference_date)
+
+
+def parse_bnpl_date(
+    text: str,
+    *,
+    reference_date: date | None = None,
+    explicit_year_hint: tuple[int, int] | None = None,
+) -> date | None:
+    """Parse Afterpay screenshot date strings such as 'Sun, 27 Dec' or '3 Jan, 2027'."""
+    parsed, _ = _parse_bnpl_date_checked(
+        text,
+        reference_date=reference_date,
+        explicit_year_hint=explicit_year_hint,
+    )
+    return parsed
 
 
 def parse_afterpay_installments_payload(
-    payload: dict[str, Any], *, reference_date: date | None = None
+    payload: dict[str, Any],
+    *,
+    reference_date: date | None = None,
+    raw_text: str | None = None,
 ) -> list[BnplInstallmentRow]:
     """Validate and normalize a vision-LLM JSON payload containing BNPL instalments.
 
@@ -646,7 +825,10 @@ def parse_afterpay_installments_payload(
     explicit_hint: tuple[int, int] | None = None
     for item in raw_items:
         if isinstance(item, dict):
-            hint = _extract_explicit_year_month(str(item.get("due_date") or ""))
+            raw_hint = str(item.get("due_date") or "")
+            if _WD_TOKEN_RE.search(raw_hint):
+                continue
+            hint = _extract_explicit_year_month(raw_hint)
             if hint is not None:
                 explicit_hint = hint
                 break
@@ -670,13 +852,23 @@ def parse_afterpay_installments_payload(
         )
         if counter is None:
             continue
-        due = parse_bnpl_date(
+        due, warning = _parse_bnpl_date_checked(
             raw_due,
             reference_date=reference_date,
             explicit_year_hint=explicit_hint,
         )
         if due is None:
             continue
+        if (
+            warning is None
+            and raw_text
+            and not _find_weekday_mentions(raw_due, due.month, due.day)
+        ):
+            due, warning = reconcile_date_weekday(
+                due, raw_text, reference_date=reference_date
+            )
+            if due is None:
+                continue
         rows.append(
             BnplInstallmentRow(
                 merchant=merchant,
@@ -685,6 +877,7 @@ def parse_afterpay_installments_payload(
                 installment_number=counter[0],
                 total_installments=counter[1],
                 currency="AUD",
+                warnings=(warning,) if warning else (),
             )
         )
     return rows
@@ -750,7 +943,7 @@ def parse_afterpay_orders_text(
     rows: list[BnplInstallmentRow] = []
     consumed_after: set[int] = set()
     for pos, (anchor_idx, n, m, date_part) in enumerate(anchors):
-        due = parse_bnpl_date(
+        due, warning = _parse_bnpl_date_checked(
             date_part,
             reference_date=reference_date,
             explicit_year_hint=explicit_hint,
@@ -819,6 +1012,7 @@ def parse_afterpay_orders_text(
                 installment_number=n,
                 total_installments=m,
                 currency="AUD",
+                warnings=(warning,) if warning else (),
             )
         )
 

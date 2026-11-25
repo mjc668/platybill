@@ -948,3 +948,238 @@ def test_real_fixture_png_files_upload_cleanly_when_present(client_db):
             assert resp.status_code == 201, resp.text
 
     assert db.query(ImportDraft).count() == 31
+
+
+# ---------------------------------------------------------------------------
+# Date-safe prompt & deterministic weekday/year reconciliation guard
+# ---------------------------------------------------------------------------
+
+DEC_2026_TODAY = date(2026, 12, 1)
+
+
+def test_prompts_include_pinned_today_and_yearless_date_rule():
+    from app.services.bill_extract import (
+        extract_bnpl_from_text,
+        extract_document_items,
+        extract_from_text,
+    )
+
+    config = LlmConfig(provider="ollama", base_url="http://ollama.test", model="gemma4")
+
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value=_vision_payload_for("afterpay-1.png"),
+    ) as mock_gen:
+        extract_document_items(
+            _png_bytes("prompt-check"),
+            config=config,
+            content_type="image/png",
+            filename="orders.png",
+            reference_date=DEC_2026_TODAY,
+        )
+    vision_prompt = mock_gen.call_args.kwargs["prompt"]
+    assert "2026-12-01" in vision_prompt
+    assert "next" in vision_prompt.lower()
+
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={
+            "provider": "Afterpay",
+            "amount": 17.76,
+            "currency": "AUD",
+            "due_date": "2026-12-27",
+            "period": None,
+            "confidence": 0.9,
+        },
+    ) as mock_gen:
+        extract_from_text(
+            "Payment due Sun, 27 Dec — $17.76",
+            config=config,
+            reference_date=DEC_2026_TODAY,
+        )
+    text_prompt = mock_gen.call_args.kwargs["prompt"]
+    assert "2026-12-01" in text_prompt
+
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={
+            "merchant": "MARULAN IGA",
+            "installment_amount": 17.76,
+            "start_date": "2026-12-27",
+        },
+    ) as mock_gen:
+        extract_bnpl_from_text(
+            "Afterpay order: first payment Sun, 27 Dec $17.76",
+            config=config,
+            reference_date=DEC_2026_TODAY,
+        )
+    bnpl_prompt = mock_gen.call_args.kwargs["prompt"]
+    assert "2026-12-01" in bnpl_prompt
+    assert "next" in bnpl_prompt.lower()
+
+
+@pytest.mark.parametrize(
+    ("source_line", "llm_due_date", "expected"),
+    [
+        ("4 of 4 • Sun, 27 Dec", "2027-12-27", date(2026, 12, 27)),
+        ("3 of 4 • Sun, 20 Dec", "2023-12-20", date(2026, 12, 20)),
+        ("4 of 4 • 3 Jan, 2027", "2027-01-03", date(2027, 1, 3)),
+    ],
+)
+def test_weekday_guard_reconciles_single_bill_and_email_paths(
+    source_line: str, llm_due_date: str, expected: date
+):
+    from app.services.bill_extract import extract_bnpl_from_text, extract_from_text
+
+    config = LlmConfig(provider="ollama", base_url="http://ollama.test", model="gemma4")
+    source_text = f"MARULAN IGA PL... $17.76\n{source_line}"
+
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={
+            "provider": "Afterpay: MARULAN IGA PL...",
+            "amount": 17.76,
+            "currency": "AUD",
+            "due_date": llm_due_date,
+            "period": None,
+            "confidence": 0.9,
+        },
+    ):
+        extracted = extract_from_text(
+            source_text, config=config, reference_date=DEC_2026_TODAY
+        )
+    assert extracted.due_date == expected
+    assert extracted.warnings == []
+
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={
+            "merchant": "MARULAN IGA PL...",
+            "installment_amount": 17.76,
+            "start_date": llm_due_date,
+        },
+    ):
+        bnpl = extract_bnpl_from_text(
+            source_text, config=config, reference_date=DEC_2026_TODAY
+        )
+    assert bnpl is not None
+    assert bnpl.start_date == expected
+    assert bnpl.warnings == []
+
+
+def test_weekday_guard_reconciles_screenshot_payload_with_wrong_years():
+    """Even if the vision model appends wrong years to weekday dates, the guard
+    re-derives 2026 for Sun 27 Dec / Sun 20 Dec while leaving explicit 3 Jan, 2027."""
+    payload = {
+        "installments": [
+            {
+                "merchant": "MARULAN IGA PL...",
+                "amount": 17.76,
+                "due_date": "Sun, 27 Dec 2027",
+                "installment_label": "4 of 4",
+            },
+            {
+                "merchant": "AMCALPHARMA...",
+                "amount": 75.00,
+                "due_date": "Sun, 20 Dec 2023",
+                "installment_label": "3 of 4",
+            },
+            {
+                "merchant": "Target",
+                "amount": 28.50,
+                "due_date": "3 Jan, 2027",
+                "installment_label": "4 of 4",
+            },
+        ]
+    }
+    rows = parse_afterpay_installments_payload(payload, reference_date=DEC_2026_TODAY)
+    assert [r.due_date for r in rows] == [
+        date(2026, 12, 27),
+        date(2026, 12, 20),
+        date(2027, 1, 3),
+    ]
+    assert all(not r.warnings for r in rows)
+
+
+def test_weekday_guard_rolls_forward_to_next_year_when_current_year_mismatches():
+    from app.services.bill_extract import extract_from_text
+
+    config = LlmConfig(provider="ollama", base_url="http://ollama.test", model="gemma4")
+    # 3 Jan 2026 is Saturday; 3 Jan 2027 is Sunday.
+    with patch(
+        "app.services.bill_extract.generate_json",
+        return_value={
+            "provider": "Afterpay: Target",
+            "amount": 28.50,
+            "currency": "AUD",
+            "due_date": "2026-01-03",
+            "period": None,
+            "confidence": 0.9,
+        },
+    ):
+        extracted = extract_from_text(
+            "Target $28.50\n4 of 4 • Sun, 3 Jan",
+            config=config,
+            reference_date=date(2026, 12, 20),
+        )
+    assert extracted.due_date == date(2027, 1, 3)
+    assert extracted.warnings == []
+
+
+def test_weekday_guard_flags_irreconcilable_weekday_and_leaves_date_unchanged(
+    client_db, caplog
+):
+    """27 Dec is Sun in 2026 and Mon in 2027 — 'Tue, 27 Dec' matches neither, so
+    the parsed date is left unchanged and flagged via warnings and draft meta."""
+    from app.services.bill_extract import extract_from_text
+
+    config = LlmConfig(provider="ollama", base_url="http://ollama.test", model="gemma4")
+    with (
+        caplog.at_level("WARNING"),
+        patch(
+            "app.services.bill_extract.generate_json",
+            return_value={
+                "provider": "Afterpay: MARULAN IGA PL...",
+                "amount": 17.76,
+                "currency": "AUD",
+                "due_date": "2027-12-27",
+                "period": None,
+                "confidence": 0.9,
+            },
+        ),
+    ):
+        extracted = extract_from_text(
+            "MARULAN IGA PL... $17.76\nDue: Tue, 27 Dec",
+            config=config,
+            reference_date=DEC_2026_TODAY,
+        )
+    assert extracted.due_date == date(2027, 12, 27)
+    assert len(extracted.warnings) == 1
+    assert "Tue" in extracted.warnings[0]
+    assert any("Tue" in rec.message for rec in caplog.records)
+
+    # Also verify screenshot payload row carries the warning into ImportDraft.meta.
+    client, db = client_db
+    token = register_and_login(client, "ap_warn_meta@test.com")
+    bad_payload = {
+        "installments": [
+            {
+                "merchant": "MARULAN IGA PL...",
+                "amount": 17.76,
+                "due_date": "Tue, 27 Dec 2027",
+                "installment_label": "4 of 4",
+            }
+        ]
+    }
+    with (
+        patch.object(settings, "ollama_base_url", "http://ollama.test"),
+        patch("app.services.bill_import.user_today", return_value=DEC_2026_TODAY),
+        patch("app.services.bill_extract.generate_json", return_value=bad_payload),
+    ):
+        resp = _upload(client, token, _png_bytes("irreconcilable"), name="bad.png")
+    assert resp.status_code == 201, resp.text
+    draft = resp.json()["drafts"][0]
+    assert draft["due_date"] == "2027-12-27"
+    assert draft["meta"] is not None
+    assert draft["meta"].get("warnings")
+    assert "Tue" in draft["meta"]["warnings"][0]

@@ -28,8 +28,10 @@ from app.services.afterpay_parser import (
     BnplInstallmentRow,
     ExtractedBnpl,
     InstallmentDetail,
+    _parse_bnpl_date_checked,
     parse_afterpay_installments_payload,
     parse_afterpay_orders_text,
+    reconcile_date_weekday,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +56,11 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         },
         "due_date": {
             "type": ["string", "null"],
-            "description": "Payment due date in YYYY-MM-DD form",
+            "description": (
+                "Payment due date in YYYY-MM-DD form (when the document omits "
+                "the year, use the next occurrence matching the printed weekday "
+                "and day on or after today)"
+            ),
         },
         "period": {
             "type": ["string", "null"],
@@ -86,8 +92,9 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                     "due_date": {
                         "type": "string",
                         "description": (
-                            "Due date as shown (e.g. 'Sun, 27 Dec', '3 Jan, 2027', "
-                            "or 'YYYY-MM-DD')"
+                            "Due date verbatim as shown (e.g. 'Sun, 27 Dec' or "
+                            "'3 Jan, 2027'); keep any weekday prefix and do not "
+                            "invent a year"
                         ),
                     },
                     "installment_number": {
@@ -148,6 +155,7 @@ class ExtractedBill:
     period: str | None
     confidence: float
     raw_text: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -163,19 +171,33 @@ def _is_nuextract(model: str) -> bool:
     return "nuextract" in model.lower()
 
 
+def _date_context(reference_date: date | None) -> str:
+    today = reference_date or date.today()
+    return (
+        f"Today's date is {today.strftime('%a, %d %b %Y')} ({today.isoformat()}). "
+        "When a date has no explicit year (e.g. 'Sun, 27 Dec'), it means the "
+        "NEXT occurrence of that weekday and day on or after today — never "
+        "invent an arbitrary year."
+    )
+
+
 def _prompt_and_schema(
-    model: str, *, document_text: str | None = None
+    model: str,
+    *,
+    document_text: str | None = None,
+    reference_date: date | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Prompt + structured-output schema for a model family.
 
     NuExtract gets its template prompt and no schema; everything else gets the
     instruction prompt constrained by the JSON schema.
     """
+    date_note = _date_context(reference_date)
     if _is_nuextract(model):
-        return _NUEXTRACT_TEMPLATE, None
-    prompt = _INSTRUCTIONS
+        return f"{date_note}\n{_NUEXTRACT_TEMPLATE}", None
+    prompt = f"{_INSTRUCTIONS} {date_note}"
     if document_text is not None:
-        prompt = f"{_INSTRUCTIONS}\n\nDocument text:\n---\n{document_text}\n---"
+        prompt = f"{prompt}\n\nDocument text:\n---\n{document_text}\n---"
     return prompt, EXTRACTION_SCHEMA
 
 
@@ -244,7 +266,46 @@ def _normalize_period(value: Any) -> str | None:
     return None
 
 
-def _parse(payload: dict[str, Any], *, raw_text: str | None = None) -> ExtractedBill:
+def _parse_and_reconcile_date(
+    value: Any,
+    *,
+    raw_text: str | None = None,
+    reference_date: date | None = None,
+) -> tuple[date | None, str | None]:
+    """Parse an extracted date string and guard it against any source weekday."""
+    if not value:
+        return None, None
+    raw_str = str(value).strip()
+    if not raw_str:
+        return None, None
+
+    parsed = _to_date(raw_str)
+    if parsed is None and re.match(r"^\d{4}-\d{2}-\d{2}", raw_str):
+        parsed = _to_date(raw_str[:10])
+
+    warning: str | None = None
+    if parsed is None:
+        parsed, warning = _parse_bnpl_date_checked(
+            raw_str, reference_date=reference_date
+        )
+    else:
+        parsed, warning = reconcile_date_weekday(
+            parsed, raw_str, reference_date=reference_date
+        )
+
+    if parsed is not None and warning is None and raw_text:
+        parsed, warning = reconcile_date_weekday(
+            parsed, raw_text, reference_date=reference_date
+        )
+    return parsed, warning
+
+
+def _parse(
+    payload: dict[str, Any],
+    *,
+    raw_text: str | None = None,
+    reference_date: date | None = None,
+) -> ExtractedBill:
     currency = payload.get("currency")
     if currency is not None:
         currency = str(currency).strip().upper()[:10] or None
@@ -253,6 +314,12 @@ def _parse(payload: dict[str, Any], *, raw_text: str | None = None) -> Extracted
         confidence_value = float(confidence) if confidence is not None else 0.5
     except (TypeError, ValueError):
         confidence_value = 0.5
+    due_date, date_warning = _parse_and_reconcile_date(
+        payload.get("due_date"),
+        raw_text=raw_text,
+        reference_date=reference_date,
+    )
+    warnings = [date_warning] if date_warning else []
     return ExtractedBill(
         provider=(
             (str(payload["provider"]).strip() or None)
@@ -261,10 +328,11 @@ def _parse(payload: dict[str, Any], *, raw_text: str | None = None) -> Extracted
         ),
         amount=_to_decimal(payload.get("amount")),
         currency=currency,
-        due_date=_to_date(payload.get("due_date")),
+        due_date=due_date,
         period=_normalize_period(payload.get("period")),
         confidence=max(0.0, min(1.0, confidence_value)),
         raw_text=raw_text,
+        warnings=warnings,
     )
 
 
@@ -303,29 +371,37 @@ def render_pdf_png(data: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def extract_from_text(text: str, *, config: LlmConfig) -> ExtractedBill:
-    prompt, schema = _prompt_and_schema(config.model, document_text=text)
+def extract_from_text(
+    text: str, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedBill:
+    prompt, schema = _prompt_and_schema(
+        config.model, document_text=text, reference_date=reference_date
+    )
     payload = generate_json(
         config=config,
         prompt=prompt,
         schema=schema,
     )
-    return _parse(payload, raw_text=text)
+    return _parse(payload, raw_text=text, reference_date=reference_date)
 
 
-def extract_from_image(image: bytes, *, config: LlmConfig) -> ExtractedBill:
+def extract_from_image(
+    image: bytes, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedBill:
     encoded = base64.b64encode(image).decode()
-    prompt, schema = _prompt_and_schema(config.model)
+    prompt, schema = _prompt_and_schema(config.model, reference_date=reference_date)
     payload = generate_json(
         config=config,
         prompt=prompt,
         images=[encoded],
         schema=schema,
     )
-    return _parse(payload)
+    return _parse(payload, reference_date=reference_date)
 
 
-def _extract_image_two_phase(image: bytes, *, config: LlmConfig) -> ExtractedBill:
+def _extract_image_two_phase(
+    image: bytes, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedBill:
     """OCR with the vision model, then extract with the text model."""
     encoded = base64.b64encode(image).decode()
     text = generate_text(
@@ -335,7 +411,7 @@ def _extract_image_two_phase(image: bytes, *, config: LlmConfig) -> ExtractedBil
     )
     if not text.strip():
         raise LlmError("OCR model returned no text")
-    return extract_from_text(text, config=config)
+    return extract_from_text(text, config=config, reference_date=reference_date)
 
 
 def extract_document(
@@ -344,6 +420,7 @@ def extract_document(
     config: LlmConfig,
     content_type: str | None = None,
     filename: str | None = None,
+    reference_date: date | None = None,
 ) -> ExtractedBill:
     """Extract from a PDF or image, choosing text vs vision automatically."""
     is_pdf = (content_type == "application/pdf") or (filename or "").lower().endswith(
@@ -352,18 +429,20 @@ def extract_document(
     if is_pdf:
         text = pdf_text(data)
         if len(text) >= 40:
-            return extract_from_text(text, config=config)
+            return extract_from_text(text, config=config, reference_date=reference_date)
         image = render_pdf_png(data)
     else:
         image = data
 
     try:
-        return extract_from_image(image, config=config)
+        return extract_from_image(image, config=config, reference_date=reference_date)
     except LlmUnavailable:
         raise
     except LlmError as exc:
         logger.info("Primary vision parse failed (%s); trying two-phase", exc)
-        return _extract_image_two_phase(image, config=config)
+        return _extract_image_two_phase(
+            image, config=config, reference_date=reference_date
+        )
 
 
 def _parse_document_payload(
@@ -373,7 +452,7 @@ def _parse_document_payload(
     reference_date: date | None = None,
 ) -> ExtractedDocument:
     bnpl_rows = parse_afterpay_installments_payload(
-        payload, reference_date=reference_date
+        payload, reference_date=reference_date, raw_text=raw_text
     )
     if bnpl_rows:
         return ExtractedDocument(
@@ -382,7 +461,7 @@ def _parse_document_payload(
             raw_text=raw_text,
         )
     return ExtractedDocument(
-        bill=_parse(payload, raw_text=raw_text),
+        bill=_parse(payload, raw_text=raw_text, reference_date=reference_date),
         bnpl_installments=[],
         raw_text=raw_text,
     )
@@ -398,7 +477,9 @@ def extract_items_from_text(
             bnpl_installments=bnpl_rows,
             raw_text=text,
         )
-    prompt, schema = _prompt_and_schema(config.model, document_text=text)
+    prompt, schema = _prompt_and_schema(
+        config.model, document_text=text, reference_date=reference_date
+    )
     payload = generate_json(
         config=config,
         prompt=prompt,
@@ -413,7 +494,7 @@ def extract_items_from_image(
     image: bytes, *, config: LlmConfig, reference_date: date | None = None
 ) -> ExtractedDocument:
     encoded = base64.b64encode(image).decode()
-    prompt, schema = _prompt_and_schema(config.model)
+    prompt, schema = _prompt_and_schema(config.model, reference_date=reference_date)
     payload = generate_json(
         config=config,
         prompt=prompt,
@@ -498,7 +579,11 @@ BNPL_EXTRACTION_SCHEMA: dict[str, Any] = {
         },
         "start_date": {
             "type": ["string", "null"],
-            "description": "Due date of first installment in YYYY-MM-DD form",
+            "description": (
+                "Due date of first installment in YYYY-MM-DD form (when the "
+                "email omits the year, use the next occurrence matching the "
+                "printed weekday and day on or after today)"
+            ),
         },
         "interval_count": {
             "type": ["integer", "null"],
@@ -513,11 +598,13 @@ BNPL_EXTRACTION_SCHEMA: dict[str, Any] = {
 }
 
 
-def extract_bnpl_from_text(text: str, *, config: LlmConfig) -> ExtractedBnpl | None:
+def extract_bnpl_from_text(
+    text: str, *, config: LlmConfig, reference_date: date | None = None
+) -> ExtractedBnpl | None:
     """Tier 2 fallback: Extract BNPL order fields using the configured LLM."""
     prompt = (
-        "Extract the Buy Now Pay Later / Afterpay order details from the email text into JSON:\n\n"
-        + text[:4000]
+        "Extract the Buy Now Pay Later / Afterpay order details from the email "
+        "text into JSON. " + _date_context(reference_date) + "\n\n" + text[:4000]
     )
     try:
         payload = generate_json(
@@ -545,8 +632,13 @@ def extract_bnpl_from_text(text: str, *, config: LlmConfig) -> ExtractedBnpl | N
             if payload.get("total_amount") is not None
             else installment_amount * 4
         )
-        parsed_start = date.fromisoformat(start_date_str[:10])
     except (ValueError, InvalidOperation):
+        return None
+
+    parsed_start, date_warning = _parse_and_reconcile_date(
+        start_date_str, raw_text=text, reference_date=reference_date
+    )
+    if parsed_start is None:
         return None
 
     interval_count = payload.get("interval_count") or 2
@@ -567,4 +659,5 @@ def extract_bnpl_from_text(text: str, *, config: LlmConfig) -> ExtractedBnpl | N
         max_occurrences=max_occurrences,
         installments=[],
         type="afterpay",
+        warnings=[date_warning] if date_warning else [],
     )
