@@ -457,6 +457,14 @@ def create_draft(
     """Insert a draft unless an active (pending/confirmed) draft already exists."""
     if _has_active_draft(db, source_ref):
         return None
+    draft_meta: dict[str, Any] | None = dict(meta) if meta is not None else None
+    if extracted.warnings:
+        draft_meta = dict(draft_meta) if draft_meta is not None else {}
+        existing_warnings = list(draft_meta.get("warnings") or [])
+        for warning in extracted.warnings:
+            if warning not in existing_warnings:
+                existing_warnings.append(warning)
+        draft_meta["warnings"] = existing_warnings
     draft = ImportDraft(
         user_id=user_id,
         source=source,
@@ -470,7 +478,7 @@ def create_draft(
         raw_text=extracted.raw_text,
         matched_bill_id=match_bill(db, user_id, extracted, filename=filename),
         status=ImportStatus.pending,
-        meta=meta,
+        meta=draft_meta,
     )
     db.add(draft)
     db.commit()
@@ -616,7 +624,9 @@ def import_text(
     config = app_settings.llm_config(db)
     if config is None:
         raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
-    extracted = extract_from_text(text, config=config)
+    user = db.get(User, user_id)
+    ref_date = user_today(user.timezone if user else None)
+    extracted = extract_from_text(text, config=config, reference_date=ref_date)
     return create_draft(
         db,
         user_id=user_id,
@@ -940,11 +950,16 @@ def _message_drafts(
     if not had_attachment and app_settings.imap_afterpay_enabled(db):
         combined_text = (html_body or "") + "\n" + (text_body or "")
         if is_afterpay_email(sender, subject, combined_text):
-            bnpl = parse_afterpay(html_body or "", text_body or "")
+            ref_date = user_today(user.timezone)
+            bnpl = parse_afterpay(
+                html_body or "", text_body or "", reference_date=ref_date
+            )
             if bnpl is None:
                 llm = app_settings.llm_config(db)
                 if llm is not None:
-                    bnpl = extract_bnpl_from_text(combined_text, config=llm)
+                    bnpl = extract_bnpl_from_text(
+                        combined_text, config=llm, reference_date=ref_date
+                    )
             if bnpl is not None:
                 ref = f"email:{message_id}:afterpay"
                 extracted = ExtractedBill(
@@ -1030,7 +1045,11 @@ def _import_email_document(
     if config is None:
         raise LlmUnavailable("No LLM provider is configured (set one up in Settings)")
     extracted = extract_document(
-        payload, config=config, content_type=content_type, filename=filename
+        payload,
+        config=config,
+        content_type=content_type,
+        filename=filename,
+        reference_date=user_today(user.timezone),
     )
     return create_draft(
         db,

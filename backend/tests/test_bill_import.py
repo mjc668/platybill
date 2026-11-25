@@ -1296,7 +1296,9 @@ def test_email_accepts_pdf_sent_as_octet_stream_and_x_pdf(client_db):
     )
     seen_types: list[str | None] = []
 
-    def fake_extract(data, *, config, content_type=None, filename=None):
+    def fake_extract(
+        data, *, config, content_type=None, filename=None, reference_date=None
+    ):
         seen_types.append(content_type)
         return fake_extracted
 
@@ -1354,7 +1356,9 @@ def test_email_ignores_inline_images_and_recovers_from_bad_attachment(client_db)
         raw_text="Water Notice",
     )
 
-    def reject_images(data, *, config, content_type=None, filename=None):
+    def reject_images(
+        data, *, config, content_type=None, filename=None, reference_date=None
+    ):
         if content_type and content_type.startswith("image/"):
             raise LlmError("logo should never be sent to LLM")
         return fake_extracted
@@ -1428,7 +1432,7 @@ def test_email_html_only_falls_back_to_text_extraction(client_db):
 
     captured: list[str] = []
 
-    def fake_extract_text(text, *, config):
+    def fake_extract_text(text, *, config, reference_date=None):
         captured.append(text)
         from app.services.bill_extract import ExtractedBill
 
