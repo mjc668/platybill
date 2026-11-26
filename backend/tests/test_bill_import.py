@@ -420,7 +420,7 @@ def test_confirm_afterpay_draft(client_db):
     assert len(drafts) == 1
     draft = drafts[0]
 
-    # Create bill
+    # Create recurring bill — confirming a BNPL draft against it must be refused (409)
     r = client.post(
         "/bills",
         json={
@@ -437,16 +437,24 @@ def test_confirm_afterpay_draft(client_db):
     assert r.status_code == 201
     bill_id = r.json()["id"]
 
-    # Confirm the draft for this bill
-    r_conf = client.post(
+    r_conflict = client.post(
         f"/import/drafts/{draft.id}/confirm",
         json={"bill_id": bill_id},
         headers=auth(token),
     )
+    assert r_conflict.status_code == 409
+
+    # Confirm the BNPL draft as an ad-hoc one-off payment instead
+    r_conf = client.post(
+        f"/import/drafts/{draft.id}/confirm",
+        json={"ad_hoc": True},
+        headers=auth(token),
+    )
     assert r_conf.status_code == 200
+    assert r_conf.json()["bill_id"] is None
     db.refresh(draft)
     assert draft.status == ImportStatus.confirmed
-    assert draft.matched_bill_id == bill_id
+    assert draft.matched_bill_id is None
 
 
 def test_confirm_matches_exact_due_date_for_multi_instance_month(client_db):

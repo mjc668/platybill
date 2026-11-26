@@ -757,14 +757,14 @@ def test_dedupes_against_existing_payment_instances_and_keeps_rounded_final(clie
     assert iga_draft["matched_bill_id"] == iga_bill_id
     assert iga_draft["amount"] == "17.76"
 
-    # Confirming the MARULAN IGA draft updates the exact 2026-12-27 instalment
-    # (not the earlier 2026-12-13 instalment in the same month).
-    r_conf = client.post(
+    # Confirming the BNPL draft against the recurring weekly template is refused (409)
+    # and leaves the existing recurring instances untouched.
+    r_conflict = client.post(
         f"/import/drafts/{iga_draft['id']}/confirm",
         json={},
         headers=auth(token),
     )
-    assert r_conf.status_code == 200, r_conf.text
+    assert r_conflict.status_code == 409, r_conflict.text
     instances = (
         db.query(PaymentInstance)
         .filter(PaymentInstance.bill_id == iga_bill_id)
@@ -773,7 +773,20 @@ def test_dedupes_against_existing_payment_instances_and_keeps_rounded_final(clie
     )
     by_due = {inst.due_date: inst.amount for inst in instances}
     assert by_due[date(2026, 12, 13)] == Decimal("17.78")
-    assert by_due[date(2026, 12, 27)] == Decimal("17.76")
+    assert by_due[date(2026, 12, 27)] == Decimal("17.78")
+
+    # Confirming as an ad-hoc one-off payment records the rounded $17.76 instalment.
+    r_conf = client.post(
+        f"/import/drafts/{iga_draft['id']}/confirm",
+        json={"ad_hoc": True},
+        headers=auth(token),
+    )
+    assert r_conf.status_code == 200, r_conf.text
+    ad_hoc_inst = db.get(PaymentInstance, r_conf.json()["instance_id"])
+    assert ad_hoc_inst is not None
+    assert ad_hoc_inst.bill_id is None
+    assert ad_hoc_inst.due_date == date(2026, 12, 27)
+    assert ad_hoc_inst.amount == Decimal("17.76")
 
 
 def test_poll_directory_imports_afterpay_screenshot_as_multiple_drafts(
