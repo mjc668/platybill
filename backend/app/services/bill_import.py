@@ -70,6 +70,29 @@ MATCH_THRESHOLD = 0.5
 _IMAP_TIMEOUT_SECONDS = 30.0
 
 
+class ImportConflictError(Exception):
+    """Raised when confirming a draft conflicts with the target template's rules."""
+
+
+def _is_bnpl_draft(draft: ImportDraft) -> bool:
+    return isinstance(draft.meta, dict) and draft.meta.get("type") == "afterpay"
+
+
+def _draft_merchant(draft: ImportDraft) -> str | None:
+    if isinstance(draft.meta, dict):
+        merchant = draft.meta.get("merchant")
+        if isinstance(merchant, str) and merchant.strip():
+            return merchant.strip()
+    return None
+
+
+def _first_non_empty(*values: str | None) -> str:
+    for value in values:
+        if value and value.strip():
+            return value.strip()
+    return ""
+
+
 def _detect_document_content_type(
     content_type: str | None, filename: str | None, payload: bytes
 ) -> str | None:
@@ -712,8 +735,12 @@ def confirm_draft(
     user = db.get(User, draft.user_id)
     local_today = user_today(user.timezone if user else None)
 
-    if ad_hoc and bill_id is None:
-        resolved_label = (label or draft.provider or "").strip()
+    if ad_hoc:
+        if bill_id is not None:
+            raise ValueError(
+                "Cannot confirm a draft as both one-off and against a bill"
+            )
+        resolved_label = _first_non_empty(label, _draft_merchant(draft), draft.provider)
         if not resolved_label:
             raise ValueError("A label is required for an ad-hoc payment")
         due_date = draft.due_date
@@ -753,6 +780,10 @@ def confirm_draft(
     bill = db.get(BillTemplate, target_bill_id)
     if bill is None or bill.user_id != draft.user_id or bill.is_deleted:
         raise ValueError("Bill not found")
+    if _is_bnpl_draft(draft) and bill.frequency != BillFrequency.one_off:
+        raise ImportConflictError(
+            "BNPL instalments must be confirmed as one-off payments"
+        )
 
     # App-wide invariant: an instance's period is its due date's month.
     # The document's billing period can disagree with the due date (e.g. an

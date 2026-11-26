@@ -32,6 +32,7 @@ from app.services.bank_accounts import BankAccountError
 from app.services.bill_import import (
     ALLOWED_CONTENT_TYPES,
     ALLOWED_SUFFIXES,
+    ImportConflictError,
     confirm_draft,
     discard_draft,
     import_document_drafts,
@@ -197,6 +198,8 @@ def confirm_import_draft(
             ad_hoc=body.ad_hoc,
             label=body.label,
         )
+    except ImportConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BankAccountError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:

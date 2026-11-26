@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ChevronRight, Inbox, Loader2, Plus, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronRight,
+  Inbox,
+  Loader2,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import {
   confirmImportDraft,
@@ -15,6 +24,11 @@ import {
   fetchNeedsConfirmation,
   type PendingConfirmationOut,
 } from "@/lib/payments-api";
+import {
+  bankAccountLabel,
+  fetchBankAccounts,
+  type BankAccount,
+} from "@/lib/bank-accounts-api";
 import { createBill, fetchBills, type BillTemplateOut } from "@/lib/bills-api";
 import { fetchCategories, type Category } from "@/lib/categories-api";
 import { fetchMe } from "@/lib/user-api";
@@ -57,6 +71,7 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
   const [estimates, setEstimates] = useState<PendingConfirmationOut[]>([]);
   const [imports, setImports] = useState<ImportDraftOut[]>([]);
   const [bills, setBills] = useState<BillTemplateOut[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [defaultCurrency, setDefaultCurrency] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -74,17 +89,28 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
       fetchImportDrafts(),
       fetchBills(),
       fetchCategories(),
+      fetchBankAccounts().catch(() => []),
       fetchMe().catch(() => null),
     ])
-      .then(([estimateData, importData, billData, categoryData, profile]) => {
-        if (cancelled) return;
-        setEstimates(estimateData);
-        setImports(importData);
-        setBills(billData);
-        setCategories(categoryData.filter((category) => !category.is_archived));
-        setDefaultCurrency(profile?.default_currency ?? null);
-        setError(null);
-      })
+      .then(
+        ([
+          estimateData,
+          importData,
+          billData,
+          categoryData,
+          accountData,
+          profile,
+        ]) => {
+          if (cancelled) return;
+          setEstimates(estimateData);
+          setImports(importData);
+          setBills(billData);
+          setBankAccounts(accountData.filter((account) => !account.is_archived));
+          setCategories(categoryData.filter((category) => !category.is_archived));
+          setDefaultCurrency(profile?.default_currency ?? null);
+          setError(null);
+        },
+      )
       .catch(() => {
         if (!cancelled) setError(t("loadFailed"));
       });
@@ -186,6 +212,7 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
               key={`import-${draft.id}`}
               draft={draft}
               bills={bills}
+              bankAccounts={bankAccounts}
               categories={categories}
               defaultCategoryId={defaultCategoryId}
               defaultCurrency={defaultCurrency}
@@ -402,6 +429,7 @@ function EstimateRow({
 function ImportRow({
   draft,
   bills,
+  bankAccounts,
   categories,
   defaultCategoryId,
   defaultCurrency,
@@ -412,6 +440,7 @@ function ImportRow({
 }: {
   draft: ImportDraftOut;
   bills: BillTemplateOut[];
+  bankAccounts: BankAccount[];
   categories: Category[];
   defaultCategoryId: number | null;
   defaultCurrency: string | null;
@@ -425,21 +454,54 @@ function ImportRow({
   const [amount, setAmount] = useState(draft.amount ?? "");
   const [dueDate, setDueDate] = useState(draft.due_date ?? "");
   const isAfterpay = draft.meta?.type === "afterpay";
-  const afterpayInstallmentLabel =
+  const metaMerchant =
+    typeof draft.meta?.merchant === "string" && draft.meta.merchant.trim().length > 0
+      ? draft.meta.merchant.trim()
+      : null;
+  const installmentLabel =
     typeof draft.meta?.installment_label === "string"
       ? draft.meta.installment_label
+      : typeof draft.meta?.installment_number === "number" &&
+          typeof draft.meta?.total_installments === "number"
+        ? `${draft.meta.installment_number} of ${draft.meta.total_installments}`
+        : null;
+  const remainingInstallments =
+    typeof draft.meta?.remaining_installments === "number"
+      ? draft.meta.remaining_installments
       : null;
   const afterpayInterval =
     typeof draft.meta?.interval_count === "number" ? draft.meta.interval_count : 2;
   const afterpayOccurrences =
     typeof draft.meta?.max_occurrences === "number" ? draft.meta.max_occurrences : 4;
-  const [billId, setBillId] = useState<string>(
-    draft.matched_bill_id != null ? String(draft.matched_bill_id) : "",
+  const metaWarnings = useMemo(() => {
+    const raw = draft.meta?.warnings;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (item): item is string => typeof item === "string" && item.trim().length > 0,
+    );
+  }, [draft.meta]);
+
+  const eligibleBills = useMemo(
+    () => (isAfterpay ? bills.filter((bill) => bill.frequency === "one_off") : bills),
+    [bills, isAfterpay],
   );
-  const [creating, setCreating] = useState(draft.matched_bill_id === null);
+  const matchedBillEligible =
+    draft.matched_bill_id != null &&
+    eligibleBills.some((bill) => bill.id === draft.matched_bill_id);
+
+  const [confirmMode, setConfirmMode] = useState<"bill" | "one_off">(
+    matchedBillEligible ? "bill" : "one_off",
+  );
+  const [billId, setBillId] = useState<string>(
+    matchedBillEligible && draft.matched_bill_id != null
+      ? String(draft.matched_bill_id)
+      : "",
+  );
+  const [accountId, setAccountId] = useState<string>("");
+  const [creating, setCreating] = useState(false);
   const [frequency, setFrequency] = useState<
     "monthly" | "weekly" | "annual" | "one_off"
-  >(isAfterpay ? "weekly" : "monthly");
+  >("monthly");
   const [newName, setNewName] = useState(draft.provider ?? draft.filename ?? "");
   const [newCategoryId, setNewCategoryId] = useState<string>(
     defaultCategoryId != null ? String(defaultCategoryId) : "",
@@ -450,42 +512,66 @@ function ImportRow({
 
   const amountValid = Number.isFinite(parseFloat(amount)) && parseFloat(amount) > 0;
   const weeklyAnchorOk = frequency !== "weekly" || dueDate !== "";
-  const canConfirm = creating
-    ? newName.trim().length > 0 && newCategoryId !== "" && amountValid && weeklyAnchorOk
-    : billId !== "" && amountValid;
+  const canConfirm =
+    confirmMode === "one_off"
+      ? amountValid && dueDate !== ""
+      : creating && !isAfterpay
+        ? newName.trim().length > 0 &&
+          newCategoryId !== "" &&
+          amountValid &&
+          weeklyAnchorOk
+        : billId !== "" && amountValid;
 
   async function handleConfirm() {
     if (!canConfirm) return;
     onBusy(true);
     onError("");
     try {
-      let targetBillId = billId === "" ? null : Number(billId);
-      if (creating) {
-        const dueDay = newDueDay === "" ? null : parseInt(newDueDay, 10);
-        const dueMonth = dueDate ? parseInt(dueDate.slice(5, 7), 10) : null;
-        const created = await createBill({
-          name: newName.trim(),
-          category_id: Number(newCategoryId),
-          frequency,
-          amount: parseFloat(amount).toFixed(2),
-          currency: draft.currency ?? defaultCurrency ?? undefined,
-          due_day: frequency === "weekly" ? null : dueDay,
-          due_month:
-            frequency === "annual" || frequency === "one_off" ? dueMonth : null,
-          start_date: frequency === "weekly" ? dueDate || null : null,
-          interval_count: isAfterpay ? afterpayInterval : 1,
-          max_occurrences: isAfterpay ? afterpayOccurrences : null,
-        });
-        targetBillId = created.id;
-      } else {
+      const selectedAccountId = accountId === "" ? null : Number(accountId);
+      if (confirmMode === "one_off") {
         await updateImportDraft(draft.id, {
           amount: parseFloat(amount).toFixed(2),
           due_date: dueDate || null,
-          matched_bill_id: targetBillId,
+        });
+        await confirmImportDraft(draft.id, null, {
+          adHoc: true,
+          accountId: selectedAccountId,
+          label:
+            !metaMerchant && !draft.provider && draft.filename
+              ? draft.filename
+              : undefined,
+        });
+      } else {
+        let targetBillId = billId === "" ? null : Number(billId);
+        if (creating && !isAfterpay) {
+          const dueDay = newDueDay === "" ? null : parseInt(newDueDay, 10);
+          const dueMonth = dueDate ? parseInt(dueDate.slice(5, 7), 10) : null;
+          const created = await createBill({
+            name: newName.trim(),
+            category_id: Number(newCategoryId),
+            preferred_account_id: selectedAccountId,
+            frequency,
+            amount: parseFloat(amount).toFixed(2),
+            currency: draft.currency ?? defaultCurrency ?? undefined,
+            due_day: frequency === "weekly" ? null : dueDay,
+            due_month:
+              frequency === "annual" || frequency === "one_off" ? dueMonth : null,
+            start_date: frequency === "weekly" ? dueDate || null : null,
+          });
+          targetBillId = created.id;
+        } else {
+          await updateImportDraft(draft.id, {
+            amount: parseFloat(amount).toFixed(2),
+            due_date: dueDate || null,
+            matched_bill_id: targetBillId,
+          });
+        }
+        await confirmImportDraft(draft.id, targetBillId, {
+          adHoc: false,
+          accountId: selectedAccountId,
         });
       }
-      await confirmImportDraft(draft.id, targetBillId);
-      const period = draft.period ?? (dueDate ? dueDate.slice(0, 7) : null);
+      const period = dueDate ? dueDate.slice(0, 7) : draft.period;
       onDone(period);
     } catch (err) {
       onError(err instanceof Error ? err.message : t("confirmFailed"));
@@ -506,44 +592,123 @@ function ImportRow({
     }
   }
 
+  const counterText =
+    installmentLabel && remainingInstallments !== null
+      ? t("afterpayInstallmentProgressRemaining", {
+          label: installmentLabel,
+          remaining: remainingInstallments,
+        })
+      : installmentLabel
+        ? t("afterpayInstallmentProgress", { label: installmentLabel })
+        : isAfterpay
+          ? t("afterpayInstallments", {
+              count: afterpayOccurrences,
+              interval: afterpayInterval === 1 ? t("weekly") : t("fortnightly"),
+            })
+          : null;
+
   return (
-    <li className="rounded-xl border border-blue-200/70 bg-white px-3 py-2 dark:border-blue-900/40 dark:bg-slate-800">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
-              {draft.provider ?? draft.filename ?? t("unknownSource")}
-            </p>
-            {isAfterpay ? (
-              <Badge tone="amber">{t("afterpayBadge")}</Badge>
-            ) : (
-              <Badge tone="blue">{t("importBadge")}</Badge>
-            )}
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              {t(`source.${draft.source}`)}
-            </span>
-          </div>
-          {isAfterpay ? (
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-              {afterpayInstallmentLabel
-                ? t("afterpayInstallmentProgress", { label: afterpayInstallmentLabel })
-                : t("afterpayInstallments", {
-                    count: afterpayOccurrences,
-                    interval: afterpayInterval === 1 ? t("weekly") : t("fortnightly"),
-                  })}
-            </p>
-          ) : (
-            draft.period && (
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {monthLabel(draft.period, locale)}
+    <li
+      data-testid="import-row"
+      className="rounded-xl border border-blue-200/70 bg-white px-3 py-2.5 dark:border-blue-900/40 dark:bg-slate-800"
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleConfirm();
+        }}
+        className="flex flex-col gap-2"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                {draft.provider ?? draft.filename ?? t("unknownSource")}
               </p>
-            )
-          )}
+              {isAfterpay ? (
+                <Badge tone="amber">{t("afterpayBadge")}</Badge>
+              ) : (
+                <Badge tone="blue">{t("importBadge")}</Badge>
+              )}
+              <span className="text-xs text-slate-400 dark:text-slate-500">
+                {t(`source.${draft.source}`)}
+              </span>
+            </div>
+            {counterText ? (
+              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                {counterText}
+              </p>
+            ) : (
+              draft.period && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {monthLabel(draft.period, locale)}
+                </p>
+              )
+            )}
+            {metaWarnings.length > 0 && (
+              <div className="mt-1 flex flex-col gap-1">
+                {metaWarnings.map((warning, idx) => (
+                  <p
+                    key={idx}
+                    className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    <AlertTriangle size={12} aria-hidden="true" className="shrink-0" />
+                    <span>{warning}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <fieldset className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-600 dark:bg-slate-900/40">
+              <legend className="sr-only">{t("confirmModeLabel")}</legend>
+              <label
+                className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
+                  confirmMode === "bill"
+                    ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`confirm-mode-${draft.id}`}
+                  value="bill"
+                  checked={confirmMode === "bill"}
+                  onChange={() => setConfirmMode("bill")}
+                  className="sr-only"
+                />
+                {t("confirmAgainstBill")}
+              </label>
+              <label
+                className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
+                  confirmMode === "one_off"
+                    ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                    : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`confirm-mode-${draft.id}`}
+                  value="one_off"
+                  checked={confirmMode === "one_off"}
+                  onChange={() => {
+                    setConfirmMode("one_off");
+                    setCreating(false);
+                  }}
+                  className="sr-only"
+                />
+                {t("confirmAsOneOff")}
+              </label>
+            </fieldset>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-600 dark:bg-slate-900/40">
             <input
               aria-label={t("amountLabel")}
+              name={`amount-${draft.id}`}
               type="number"
               step="0.01"
               min="0.01"
@@ -557,17 +722,19 @@ function ImportRow({
           </div>
           <input
             aria-label={t("dueLabel")}
+            name={`due-date-${draft.id}`}
             type="date"
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
             className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-200"
           />
-          {!creating && (
+          {confirmMode === "bill" && !creating && (
             <select
               aria-label={t("billLabel")}
+              name={`bill-${draft.id}`}
               value={billId}
               onChange={(e) => {
-                if (e.target.value === "__new__") {
+                if (e.target.value === "__new__" && !isAfterpay) {
                   setCreating(true);
                   return;
                 }
@@ -575,18 +742,37 @@ function ImportRow({
               }}
               className="max-w-44 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
             >
-              <option value="">{t("pickBill")}</option>
-              {bills.map((bill) => (
+              <option value="">
+                {isAfterpay && eligibleBills.length === 0
+                  ? t("noOneOffBills")
+                  : t("pickBill")}
+              </option>
+              {eligibleBills.map((bill) => (
                 <option key={bill.id} value={bill.id}>
                   {bill.name}
                 </option>
               ))}
-              <option value="__new__">{t("newBillOption")}</option>
+              {!isAfterpay && (
+                <option value="__new__">{t("newBillOption")}</option>
+              )}
             </select>
           )}
+          <select
+            aria-label={t("accountLabel")}
+            name={`account-${draft.id}`}
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="max-w-44 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          >
+            <option value="">{t("accountUnspecified")}</option>
+            {bankAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {bankAccountLabel(account)}
+              </option>
+            ))}
+          </select>
           <button
-            type="button"
-            onClick={handleConfirm}
+            type="submit"
             disabled={busy || !canConfirm}
             className="flex items-center gap-1 rounded-lg border border-blue-700 bg-blue-700 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:border-blue-800 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -603,80 +789,96 @@ function ImportRow({
             <Trash2 size={13} />
           </button>
         </div>
-      </div>
 
-      {creating && (
-        <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-900/40">
-          <div className="flex flex-col gap-1">
-            <label htmlFor={`new-name-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
-              {t("newBillName")}
-            </label>
-            <input
-              id={`new-name-${draft.id}`}
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor={`new-cat-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
-              {t("newBillCategory")}
-            </label>
-            <select
-              id={`new-cat-${draft.id}`}
-              value={newCategoryId}
-              onChange={(e) => setNewCategoryId(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-            >
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name ?? category.key}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor={`new-freq-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
-              {t("newBillFrequency")}
-            </label>
-            <select
-              id={`new-freq-${draft.id}`}
-              value={frequency}
-              onChange={(e) =>
-                setFrequency(
-                  e.target.value as "monthly" | "weekly" | "annual" | "one_off",
-                )
-              }
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-            >
-              <option value="monthly">{t("frequency.monthly")}</option>
-              <option value="weekly">{t("frequency.weekly")}</option>
-              <option value="annual">{t("frequency.annual")}</option>
-              <option value="one_off">{t("frequency.one_off")}</option>
-            </select>
-          </div>
-          {frequency !== "weekly" && (
+        {confirmMode === "bill" && creating && !isAfterpay && (
+          <div className="mt-1 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-900/40">
             <div className="flex flex-col gap-1">
-              <label htmlFor={`new-day-${draft.id}`} className="text-xs text-slate-500 dark:text-slate-400">
-                {t("newBillDueDay")}
+              <label
+                htmlFor={`new-name-${draft.id}`}
+                className="text-xs text-slate-500 dark:text-slate-400"
+              >
+                {t("newBillName")}
               </label>
               <input
-                id={`new-day-${draft.id}`}
-                type="number"
-                min="1"
-                max="31"
-                value={newDueDay}
-                onChange={(e) => setNewDueDay(e.target.value)}
-                className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                id={`new-name-${draft.id}`}
+                name={`new-name-${draft.id}`}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
-          )}
-          <p className="flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500">
-            <Plus size={12} />
-            {t("newBillHint")}
-          </p>
-        </div>
-      )}
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor={`new-cat-${draft.id}`}
+                className="text-xs text-slate-500 dark:text-slate-400"
+              >
+                {t("newBillCategory")}
+              </label>
+              <select
+                id={`new-cat-${draft.id}`}
+                name={`new-cat-${draft.id}`}
+                value={newCategoryId}
+                onChange={(e) => setNewCategoryId(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              >
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name ?? category.key}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor={`new-freq-${draft.id}`}
+                className="text-xs text-slate-500 dark:text-slate-400"
+              >
+                {t("newBillFrequency")}
+              </label>
+              <select
+                id={`new-freq-${draft.id}`}
+                name={`new-freq-${draft.id}`}
+                value={frequency}
+                onChange={(e) =>
+                  setFrequency(
+                    e.target.value as "monthly" | "weekly" | "annual" | "one_off",
+                  )
+                }
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <option value="monthly">{t("frequency.monthly")}</option>
+                <option value="weekly">{t("frequency.weekly")}</option>
+                <option value="annual">{t("frequency.annual")}</option>
+                <option value="one_off">{t("frequency.one_off")}</option>
+              </select>
+            </div>
+            {frequency !== "weekly" && (
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor={`new-day-${draft.id}`}
+                  className="text-xs text-slate-500 dark:text-slate-400"
+                >
+                  {t("newBillDueDay")}
+                </label>
+                <input
+                  id={`new-day-${draft.id}`}
+                  name={`new-day-${draft.id}`}
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={newDueDay}
+                  onChange={(e) => setNewDueDay(e.target.value)}
+                  className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+            )}
+            <p className="flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500">
+              <Plus size={12} />
+              {t("newBillHint")}
+            </p>
+          </div>
+        )}
+      </form>
     </li>
   );
 }
