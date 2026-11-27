@@ -409,14 +409,52 @@ def match_bill(
     return winners[0].id if len(winners) == 1 else None
 
 
-def _is_duplicate_bnpl_instalment(
+@dataclass(frozen=True)
+class DuplicateMatch:
+    """Outcome of checking a BNPL instalment row against existing records."""
+
+    kind: str
+    exact: bool
+    description: str
+
+
+def _draft_instalment_pair(draft: ImportDraft) -> tuple[int, int] | None:
+    """Return (installment_number, total_installments) for a BNPL list draft."""
+    if not _is_bnpl_draft(draft) or not isinstance(draft.meta, dict):
+        return None
+    num = draft.meta.get("installment_number")
+    total = draft.meta.get("total_installments")
+    if (
+        isinstance(num, int)
+        and not isinstance(num, bool)
+        and isinstance(total, int)
+        and not isinstance(total, bool)
+    ):
+        return (num, total)
+    return None
+
+
+def _format_due_short(due_date: date) -> str:
+    return f"{due_date.day} {due_date.strftime('%b')}"
+
+
+def _find_bnpl_duplicate(
     db: Session,
     user_id: int,
     row: BnplInstallmentRow,
     matched_bill_id: int | None,
-) -> bool:
-    """True when (merchant, amount, due_date) already exists as a draft or payment instance."""
+) -> DuplicateMatch | None:
+    """Classify a BNPL instalment conflict as Tier 1 (exact) or Tier 2 (ambiguous).
+
+    Tier 1 (exact=True): merchant, amount, due_date, AND (installment_number,
+    total_installments) match an existing pending/confirmed BNPL draft.
+    Tier 2 (exact=False): merchant, amount, and due_date match a weaker record —
+    a payment instance (no instalment identity), a draft without BNPL instalment
+    meta, or a BNPL draft with different instalment numbers.
+    """
     provider_name = f"Afterpay: {row.merchant}"
+    due_label = _format_due_short(row.due_date)
+    row_pair = (row.installment_number, row.total_installments)
 
     # 1. Existing pending/confirmed drafts with the same due_date and amount.
     existing_drafts = (
@@ -427,15 +465,52 @@ def _is_duplicate_bnpl_instalment(
             ImportDraft.amount == row.amount,
             ImportDraft.status.in_([ImportStatus.pending, ImportStatus.confirmed]),
         )
+        .order_by(ImportDraft.id.asc())
         .all()
     )
+    weak_match: DuplicateMatch | None = None
     for draft in existing_drafts:
-        if matched_bill_id is not None and draft.matched_bill_id == matched_bill_id:
-            return True
-        if draft.provider and merchants_match(provider_name, draft.provider):
-            return True
+        merchant_matches = (
+            matched_bill_id is not None and draft.matched_bill_id == matched_bill_id
+        ) or (
+            draft.provider is not None
+            and merchants_match(provider_name, draft.provider)
+        )
+        if not merchant_matches:
+            continue
+        conflict_name = draft.provider or provider_name
+        draft_pair = _draft_instalment_pair(draft)
+        if draft_pair == row_pair:
+            return DuplicateMatch(
+                kind="draft",
+                exact=True,
+                description=(
+                    f"Duplicate: {conflict_name} already has ${row.amount:.2f} "
+                    f"due {due_label} (draft #{draft.id}, instalment "
+                    f"{draft_pair[0]} of {draft_pair[1]})."
+                ),
+            )
+        if weak_match is None:
+            if draft_pair is not None:
+                detail = (
+                    f"draft #{draft.id}, instalment {draft_pair[0]} of {draft_pair[1]}"
+                )
+            else:
+                detail = f"draft #{draft.id}"
+            weak_match = DuplicateMatch(
+                kind="draft",
+                exact=False,
+                description=(
+                    f"Possible duplicate: {conflict_name} already has "
+                    f"${row.amount:.2f} due {due_label} ({detail})."
+                ),
+            )
+
+    if weak_match is not None:
+        return weak_match
 
     # 2. Existing non-deleted payment instances with the same due_date and amount.
+    # Payment instances carry no instalment identity, so any match is Tier 2.
     existing_instances = (
         db.query(PaymentInstance, BillTemplate)
         .outerjoin(BillTemplate, PaymentInstance.bill_id == BillTemplate.id)
@@ -455,16 +530,26 @@ def _is_duplicate_bnpl_instalment(
             PaymentInstance.due_date == row.due_date,
             PaymentInstance.amount == row.amount,
         )
+        .order_by(PaymentInstance.id.asc())
         .all()
     )
     for inst, bill in existing_instances:
-        if matched_bill_id is not None and inst.bill_id == matched_bill_id:
-            return True
         name = inst.label if inst.label else (bill.name if bill is not None else "")
-        if "afterpay" in name.lower() and merchants_match(provider_name, name):
-            return True
+        matches_instance = (
+            matched_bill_id is not None and inst.bill_id == matched_bill_id
+        ) or ("afterpay" in name.lower() and merchants_match(provider_name, name))
+        if matches_instance:
+            conflict_name = name or provider_name
+            return DuplicateMatch(
+                kind="payment_instance",
+                exact=False,
+                description=(
+                    f"Possible duplicate: {conflict_name} already has "
+                    f"${row.amount:.2f} due {due_label} (payment instance #{inst.id})."
+                ),
+            )
 
-    return False
+    return None
 
 
 @dataclass
@@ -584,9 +669,17 @@ def import_document_drafts(
                 raw_text=doc.raw_text,
             )
             matched_bill_id = match_bill(db, user_id, extracted)
-            if _is_duplicate_bnpl_instalment(db, user_id, row, matched_bill_id):
+            duplicate = _find_bnpl_duplicate(db, user_id, row, matched_bill_id)
+            if duplicate is not None and duplicate.exact:
                 skipped += 1
                 continue
+            meta = row.to_meta()
+            if duplicate is not None:
+                meta["possible_duplicate"] = True
+                warnings = list(meta.get("warnings") or [])
+                if duplicate.description not in warnings:
+                    warnings.append(duplicate.description)
+                meta["warnings"] = warnings
             row_ref = f"{bnpl_prefix}{row_index}"
             draft = create_draft(
                 db,
@@ -595,7 +688,7 @@ def import_document_drafts(
                 source_ref=row_ref,
                 filename=filename,
                 extracted=extracted,
-                meta=row.to_meta(),
+                meta=meta,
             )
             if draft is None:
                 skipped += 1
