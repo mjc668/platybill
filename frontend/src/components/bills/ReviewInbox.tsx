@@ -34,10 +34,16 @@ import { fetchCategories, type Category } from "@/lib/categories-api";
 import { fetchMe } from "@/lib/user-api";
 import { createAmountFormatter } from "@/lib/payment-totals";
 
+export interface ImportUploadSummary {
+  drafted: number;
+  skipped: number;
+}
+
 interface Props {
   refreshToken: number;
   onApplied: () => void;
   onJumpToMonth: (month: string) => void;
+  lastUpload?: ImportUploadSummary | null;
 }
 
 const FUTURE_ESTIMATE_CAP = 3;
@@ -64,7 +70,12 @@ function formatDueDay(dueDate: string, locale: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: Props) {
+export default function ReviewInbox({
+  refreshToken,
+  onApplied,
+  onJumpToMonth,
+  lastUpload,
+}: Props) {
   const t = useTranslations("ReviewInbox");
   const locale = useLocale();
 
@@ -79,6 +90,7 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [dismissedUpload, setDismissedUpload] = useState<ImportUploadSummary | null>(null);
 
   const currentMonth = getCurrentMonth();
 
@@ -160,6 +172,11 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
     if (period) setResult(period);
   }
 
+  const batchNotice =
+    lastUpload && lastUpload.skipped > 0 && dismissedUpload !== lastUpload
+      ? lastUpload
+      : null;
+
   if (total === 0 && !result && !error) return null;
 
   return (
@@ -202,6 +219,32 @@ export default function ReviewInbox({ refreshToken, onApplied, onJumpToMonth }: 
               <X size={13} />
             </button>
           </div>
+        </div>
+      )}
+
+      {batchNotice && (
+        <div
+          role="status"
+          data-testid="review-inbox-batch-skipped"
+          className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/25 dark:text-amber-300"
+        >
+          <span className="flex items-center gap-1.5">
+            <AlertTriangle size={13} aria-hidden="true" className="shrink-0" />
+            <span>
+              {t("batchSkippedNotice", {
+                drafted: batchNotice.drafted,
+                skipped: batchNotice.skipped,
+              })}
+            </span>
+          </span>
+          <button
+            type="button"
+            aria-label={t("dismiss")}
+            onClick={() => setDismissedUpload(batchNotice)}
+            className="shrink-0 text-amber-700/70 hover:text-amber-900 dark:text-amber-300/70 dark:hover:text-amber-200"
+          >
+            <X size={13} />
+          </button>
         </div>
       )}
 

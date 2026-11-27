@@ -161,6 +161,8 @@
     },
     "BillsPage": {
         "importBill": "Import bill",
+        "importSummaryWithSkipped": "{drafted, plural, one {# row drafted} other {# rows drafted}} — {skipped, plural, one {# was} other {# were}} already recorded and skipped.",
+        "importSummaryDrafted": "{drafted, plural, one {# row drafted.} other {# rows drafted.}}",
         "viewDue": "Next due",
         "viewCategory": "By category",
         "title": "Your Bills",
@@ -368,6 +370,7 @@
         "confirm": "Confirm",
         "discard": "Discard",
         "addedTo": "Added to {period}",
+        "batchSkippedNotice": "This batch: {drafted} drafted, {skipped} already in the ledger — check the screenshot for {skipped, plural, one {the row} other {rows}} that did not appear.",
         "viewMonth": "View",
         "dismiss": "Dismiss",
         "amountInvalid": "Enter a valid amount greater than zero",
