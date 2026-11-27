@@ -31,7 +31,7 @@ import { categoryColor, categoryValue, sortCategories } from "@/lib/categories";
 import { fetchMe, type UserProfile } from "@/lib/user-api";
 import { SessionExpiredError } from "@/lib/api";
 import BillTemplateForm from "@/components/bills/BillTemplateForm";
-import ReviewInbox from "@/components/bills/ReviewInbox";
+import ReviewInbox, { type ImportUploadSummary } from "@/components/bills/ReviewInbox";
 import { uploadBill } from "@/lib/imports-api";
 import BillTemplateRow from "@/components/bills/BillTemplateRow";
 import ArchiveConfirmDialog from "@/components/bills/ArchiveConfirmDialog";
@@ -77,6 +77,7 @@ export default function BillsPage() {
   const [importRefresh, setImportRefresh] = useState(0);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportUploadSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -133,8 +134,12 @@ export default function BillsPage() {
     if (!file) return;
     setImportBusy(true);
     setImportError(null);
+    setImportSummary(null);
     try {
-      await uploadBill(file);
+      const res = await uploadBill(file);
+      const drafted = res.drafts?.length ?? 1;
+      const skipped = res.skipped_duplicates ?? 0;
+      setImportSummary({ drafted, skipped });
       setImportRefresh((token) => token + 1);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : t("importFailed"));
@@ -299,6 +304,7 @@ export default function BillsPage() {
 
       <ReviewInbox
         refreshToken={importRefresh}
+        lastUpload={importSummary}
         onApplied={() => setRefreshKey((key) => key + 1)}
         onJumpToMonth={(month) => router.push(`/dashboard/payments?month=${month}`)}
       />
@@ -306,6 +312,25 @@ export default function BillsPage() {
       {importError && (
         <p className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
           {importError}
+        </p>
+      )}
+
+      {importSummary && (importSummary.skipped > 0 || importSummary.drafted > 1) && (
+        <p
+          role="status"
+          data-testid="import-summary"
+          className={
+            importSummary.skipped > 0
+              ? "mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300"
+              : "mb-4 rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          }
+        >
+          {importSummary.skipped > 0
+            ? t("importSummaryWithSkipped", {
+                drafted: importSummary.drafted,
+                skipped: importSummary.skipped,
+              })
+            : t("importSummaryDrafted", { drafted: importSummary.drafted })}
         </p>
       )}
 
