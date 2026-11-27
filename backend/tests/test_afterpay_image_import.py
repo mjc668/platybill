@@ -690,9 +690,10 @@ def test_truncation_width_change_still_dedupes_but_distinct_stores_do_not(client
 
 
 def test_dedupes_against_existing_payment_instances_and_keeps_rounded_final(client_db):
-    """Instalments already present as PaymentInstances with the same merchant,
-    amount, and due_date are skipped; a final instalment whose amount differs
-    (e.g. $17.76 vs scheduled $17.78) still creates a pending draft."""
+    """Instalments matching an existing PaymentInstance (no instalment identity)
+    are drafted and flagged as possible duplicates rather than silently skipped;
+    a final instalment whose amount differs (e.g. $17.76 vs scheduled $17.78)
+    creates an unflagged pending draft."""
     client, db = client_db
     token = register_and_login(client, "ap_reality@test.com")
 
@@ -712,7 +713,16 @@ def test_dedupes_against_existing_payment_instances_and_keeps_rounded_final(clie
         headers=auth(token),
     )
     assert r_target.status_code == 201
+    target_bill_id = r_target.json()["id"]
     sync_payments(client, token, "2027-01")
+    target_inst = (
+        db.query(PaymentInstance)
+        .filter(
+            PaymentInstance.bill_id == target_bill_id,
+            PaymentInstance.due_date == date(2027, 1, 3),
+        )
+        .one()
+    )
 
     # MARULAN IGA: $17.78 fortnightly starting 2026-11-15 -> 2026-12-27 is $17.78
     # Screenshot has $17.76 on 2026-12-27 (2c rounding on 4th instalment).
@@ -745,17 +755,25 @@ def test_dedupes_against_existing_payment_instances_and_keeps_rounded_final(clie
 
     assert resp.status_code == 201, resp.text
     drafts = resp.json()["drafts"]
-    # Target ($28.50 on 2027-01-03) already exists as a PaymentInstance -> skipped.
-    # Remaining 6 rows (including MARULAN IGA $17.76 != $17.78) -> created!
-    assert len(drafts) == 6
-    assert resp.json()["skipped_duplicates"] == 1
-    assert all(d["provider"] != "Afterpay: Target" for d in drafts)
+    # Target ($28.50 on 2027-01-03) matches a PaymentInstance (Tier 2) -> created & flagged.
+    # Remaining 6 rows (including MARULAN IGA $17.76 != $17.78) -> created unflagged!
+    assert len(drafts) == 7
+    assert resp.json()["skipped_duplicates"] == 0
+
+    target_draft = next(d for d in drafts if d["provider"] == "Afterpay: Target")
+    assert target_draft["meta"]["possible_duplicate"] is True
+    assert any(
+        f"payment instance #{target_inst.id}" in w
+        for w in target_draft["meta"]["warnings"]
+    )
 
     iga_draft = next(
         d for d in drafts if d["provider"] == "Afterpay: MARULAN IGA PL..."
     )
     assert iga_draft["matched_bill_id"] == iga_bill_id
     assert iga_draft["amount"] == "17.76"
+    assert not iga_draft["meta"].get("possible_duplicate")
+    assert not iga_draft["meta"].get("warnings")
 
     # Confirming the BNPL draft against the recurring weekly template is refused (409)
     # and leaves the existing recurring instances untouched.
